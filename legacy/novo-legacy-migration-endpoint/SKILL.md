@@ -302,6 +302,17 @@ Accept the endpoint by name, number, or Java method name.
     **No modificar código.** El usuario decide qué IDs corregir; cada corrección entra por el flujo
     normal de fases vía `parity-solve`.
 
+11. **Sección "Bugs Java detectados" (parity, pero para bugs):** además de las divergencias, reporta
+    cualquier **bug crítico** encontrado al leer el fuente Java (corrupción de datos, seguridad,
+    resultado/monto incorrecto, pérdida de dinero). Por cada uno:
+
+    > `⚠️ Bug Java detectado:` {qué} · severidad · impacto · ubicación (`Clase.metodo:línea`) ·
+    > mitigación propuesta en Go
+
+    Las reglas de negocio de Java son la spec y se respetan por defecto; un bug crítico es la única
+    excepción y **se DECIDE con el usuario** (mitigar en Go o replicar tal cual) — no se corrige ni se
+    replica en silencio. Si no hay, indica "sin bugs críticos detectados".
+
 ### Reglas
 
 - Mensajes y códigos de error son **inmutables** — se exige match exacto de texto.
@@ -796,11 +807,16 @@ Before writing ANY code in any phase:
 
 ### Parity (NON-NEGOTIABLE)
 
+- **Java business rules ARE the spec — always respected.** Migrate the decision exactly: codes,
+  messages, validation precedence, response shape. Default = replicate the Java behavior.
 - Error codes and messages are **IMMUTABLE** — match source exactly
-- Validation order must match source
+- Validation order / precedence must match source
 - Response structure (field names, nesting, null behavior) must match
-- Critical bugs → flag with warning, wait for approval
-- Non-critical bugs → fix, mention deviation explicitly
+- **Critical bug** (data corruption, security, wrong outcome/amount, money loss) → the ONLY exception:
+  **REPORT it** with `⚠️ Bug Java detectado:` (severity · impact · Java location · proposed Go
+  mitigation) and **DECIDE WITH THE USER** whether to mitigate in Go or replicate as-is. Never
+  silently fix, never silently replicate a critical bug. This is *parity, but for bugs*: report → decide → act.
+- **Non-critical bug** → fix in Go, mention the deviation explicitly.
 
 ### Rule consolidation & performance parity (efficiency without breaking the decision)
 
