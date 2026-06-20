@@ -200,6 +200,10 @@ Accept the endpoint by name, number, or Java method name.
 
 ### Workflow
 
+> **ALWAYS checkout main first:** `git checkout main && git pull`. Parity is validated against the
+> canonical Go code merged in `main`, NEVER the current feature branch's WIP. If the working tree is
+> dirty, stash or commit before switching, and restore afterwards.
+
 1. **Load `.migration-context.yaml`** — if missing, tell the user to run `/migration-context` first.
 2. **Resolve the endpoint** in `endpoint_inventory`. If `status: not_started` → there is no Go
    side to compare; tell the user and suggest `/migrate <endpoint>` instead. Stop.
