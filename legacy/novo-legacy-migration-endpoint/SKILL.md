@@ -338,8 +338,9 @@ Usage: `/migrate parity-solve cashin cases (9,10,11)`
    tests). If the selected cases exceed it, split into `parity-1`, `parity-2`, … Each phase includes
    tests, `make check` (0 issues, coverage ≥85%), and a version bump.
 6. **Present the roadmap and WAIT for approval.** Before creating any branch, **ASK the user for the
-   Jira epic/ticket** to use for these parity fixes (if not already known). Then execute phase by
-   phase using the normal Phase START/END sequence: **always `git checkout main && git pull` first,
+   Jira epic/ticket** for these parity fixes. If they give an epic, **search its children for the
+   ticket matching this endpoint, show the candidate, and confirm it** before branching (same as
+   Phase START step 2). Then execute phase by phase: **always `git checkout main && git pull` first,
    then create** `feature/{ticket}-parity-{n}` **from `main`** — one phase merged before the next.
 
 ### Output (roadmap)
@@ -610,8 +611,19 @@ The number of phases varies per endpoint (3 to 7+). The rule is the same regardl
 ### Phase START sequence (EVERY phase)
 
 1. **Confirm merge**: "Is Phase N merged to main?"
-2. **Confirm the Jira epic/ticket** — if the ticket (or epic) for this work is NOT already known,
-   **ASK the user for it before creating any branch**. Never branch without a ticket reference.
+2. **Resolve the Jira ticket** — if the work's ticket is not known, ASK the user for the ticket or
+   epic. **If the user gives an EPIC (not a specific ticket), search Jira under that epic for the
+   child ticket whose summary matches this endpoint** (by its `java_method`/name), present the best
+   candidate (`KEY — summary`), and **ask the user to confirm it's the right ticket BEFORE creating
+   the branch**. If nothing matches, ask for the ticket number or whether to create one. Never branch
+   without a confirmed ticket reference.
+
+   ```bash
+   # search the epic's children for the endpoint
+   curl -s -G "https://{jira_host}/rest/api/3/search" \
+     --data-urlencode "jql=parent={EPIC} AND summary ~ \"{endpoint_or_java_method}\"" \
+     -H "Authorization: Basic ${AUTH}"
+   ```
 3. `git checkout main && git pull` — **every branch ALWAYS starts from `main`** (stash/commit dirty tree first)
 4. Verify go-bricks version — if outdated, update branch FIRST
 5. **Create the branch:** `git checkout -b {branch_prefix}{ticket}-{phase}` — **from main** (do create it, don't skip)
