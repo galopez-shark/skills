@@ -23,6 +23,34 @@ Collects all project-level information needed to migrate endpoints from a legacy
 
 ---
 
+## Subcommand: `/migration-context help` (alias `?`)
+
+Print the help card below when the user types `/migration-context help`, `/migration-context ?`, or
+asks "what does this do / what commands / how do I use it".
+
+```text
+migration-context — set up & maintain the project migration context (.migration-context.yaml).
+
+USAGE
+  /migration-context                     First run: collect source repos, properties, DB, auth,
+                                         encryption, external services, full endpoint inventory.
+                                         Re-invoke: add/update a section or manage the inventory.
+  /migration-context ticket <endpoint>   Generate a Jira-ready MD ticket for the endpoint
+                                         (docs/tickets/<endpoint>_migration.md) for the PO.
+  /migration-context help                This help (alias: ?).
+
+PRODUCES  .migration-context.yaml — consumed by the `/migrate` skill.
+
+NOTES
+  • If run from the legacy repo, it asks for the Go target repo (git URL/path) — never assumes it.
+  • Records github.com/novopayment/mdw-welcome-project-go as the canonical go-bricks/architecture reference.
+  • go-bricks is the mandatory target framework.
+
+NEXT  after setup, use `/migrate list`, `/migrate roadmap`, or `/migrate <endpoint>`.
+```
+
+---
+
 ## Workflow
 
 ### 0. Check for existing context
@@ -223,8 +251,18 @@ After each service:
 
 ### 6. Target Go Project
 
+> **If this skill is being run from the legacy source repo** (not the Go target), you cannot assume
+> the target — **ASK the user which Go repository to use and request its git URL or local path**
+> before continuing. Never treat the legacy repo as the target.
+>
+> **Canonical Go reference (ALWAYS):** record
+> [`novopayment/mdw-welcome-project-go`](https://github.com/novopayment/mdw-welcome-project-go) as
+> `target.reference_repo`. It defines the mandatory go-bricks usage and Go architecture; every
+> migration defers to it when a pattern is unclear.
+
 ```
 Q: Path to the target Go repository?
+   (if running from the legacy repo, ask for the git URL or local path — do not assume)
 
 Q: What Go framework is the target built on?
    (go-bricks, standard library, Echo, Gin, Fiber, etc.)
@@ -537,6 +575,7 @@ target:
   framework: "go-bricks"
   framework_version: "v0.30.0"
   framework_rule: "MANDATORY — if go-bricks provides it, use it. Never reinvent."
+  reference_repo: "https://github.com/novopayment/mdw-welcome-project-go"  # canonical go-bricks + architecture reference
   gobricks_mapping:
     http_server: "server.Echo"
     route_binding: "server.HandlerContext"

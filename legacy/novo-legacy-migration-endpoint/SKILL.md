@@ -23,6 +23,40 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate status <endpoint>` — show phase-level detail for one endpoint
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
 - `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
+- `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
+
+---
+
+## Subcommand: `/migrate help` (alias `?`)
+
+Print the help card below. Trigger when the user types `/migrate help`, `/migrate ?`, or asks
+"what can this do / what commands does it have / how do I use it".
+
+```text
+migrate — migrate ONE legacy endpoint to Go (go-bricks), phase by phase.
+
+SUBCOMMANDS
+  /migrate <endpoint>          Migrate an endpoint (default). Reads Java, plans phases, executes
+                               domain → repository → service → handler → docs, one branch per phase.
+  /migrate list                Table of every endpoint + migration status.
+  /migrate roadmap             Recommended wave order + effort estimates.
+  /migrate status <endpoint>   Phase-level detail for one endpoint.
+  /migrate verify-parity <ep>  Read-only Java↔Go business-logic symmetry report (alias: simetria).
+  /migrate help                This help (alias: ?).
+
+REQUIRES  .migration-context.yaml — run /migration-context first to create it.
+
+KEY RULES
+  • Every phase branches from main; ≤400 new lines / ≤10 files per phase; bump version each phase.
+  • go-bricks is mandatory. Canonical reference: github.com/novopayment/mdw-welcome-project-go.
+  • If run from the legacy repo, ask for the Go target repo (git) before doing anything.
+  • Parity: error codes/messages/flows must match Java (flag bugs, don't replicate).
+  • verify-parity always checks out main first.
+  • The route-enabling phase adds the endpoint to the Postman collection.
+  • PR title: `feat: <desc> (CEB-XXXX)`. No commit without explicit approval.
+```
+
+After printing, ask what the user wants to do next (list / roadmap / migrate / verify-parity).
 
 ---
 
@@ -270,6 +304,20 @@ Accept the endpoint by name, number, or Java method name.
 ## Default: `/migrate` or `/migrate <endpoint>` — Migrate an Endpoint
 
 ### Pre-flight
+
+#### 0. Confirm the working repo (legacy vs Go target)
+
+If the skill is invoked from the **legacy source repo** (e.g. `mftech_version_2.0`) — or from any
+repo that is NOT the Go target — **STOP and ask the user which Go repository to migrate into**:
+request the **git URL or local path**, then `cd`/clone to it before doing anything else. NEVER
+write Go code inside the legacy repo.
+
+**Canonical Go reference (ALWAYS):** treat
+[`novopayment/mdw-welcome-project-go`](https://github.com/novopayment/mdw-welcome-project-go) as the
+source of truth for **go-bricks usage and the target Go architecture** (module layout, layering,
+`server`/`database`/`httpclient`/`cryptoutil`/`logger` wiring, config injection, testing). When
+`.migration-context.yaml` or the target repo lacks a pattern, defer to this reference project — never
+to memory or guesswork. Record it as `target.reference_repo` in the context file.
 
 #### 1. Load context
 
@@ -626,9 +674,11 @@ current_branch: ""
 
 Before writing ANY code in any phase:
 1. Check `gobricks_mapping` in `.migration-context.yaml`
-2. Grep go-bricks source for the types you need
-3. If go-bricks has it → use it directly
-4. If go-bricks doesn't have it → implement it, but follow go-bricks patterns
+2. Cross-reference [`novopayment/mdw-welcome-project-go`](https://github.com/novopayment/mdw-welcome-project-go)
+   — the canonical reference for go-bricks usage and Go architecture; follow its module/layer/wiring patterns
+3. Grep go-bricks source for the types you need
+4. If go-bricks has it → use it directly
+5. If go-bricks doesn't have it → implement it, but follow go-bricks + welcome-project patterns
 
 **go-bricks provides:**
 - HTTP server, routing, handler context → `server.*`
