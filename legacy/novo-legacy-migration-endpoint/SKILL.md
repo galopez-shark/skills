@@ -778,6 +778,26 @@ Before writing ANY code in any phase:
 - Critical bugs → flag with warning, wait for approval
 - Non-critical bugs → fix, mention deviation explicitly
 
+### Rule consolidation & performance parity (efficiency without breaking the decision)
+
+Legacy code often **scatters and REPEATS** the same business rules across layers (resource + service
++ dao) and **re-fetches the same data multiple times** (e.g. cashin: `getUserData`, then
+`isCardStatusValidation` and `isCardExpiryDateValidation` each re-query `getCardDetails` — 3 DB reads
+of the same card). When migrating to Go:
+
+- **Consolidate** repeated reads/validations into ONE efficient pass (single DB fetch, checks
+  evaluated in order). Do NOT replicate the source's redundant re-queries / re-validations.
+- **Preserve the business OUTCOME exactly**: the same code/message must win, in the same **order of
+  precedence** (the check that fires first in the source must still fire first in Go). Parity is
+  about the *decision*, not the number of round-trips.
+- **Always flag the consolidation** in the STEP 0 analysis and the PR: list which source steps were
+  merged and why it's outcome-equivalent (this is the "flow improvement — mention the deviation" rule).
+- Net effect = **performance parity**: identical rules, fewer DB hits, no reprocessing.
+
+In `verify-parity`, a Go consolidation of repeated source checks is **🟢 mejora intencional** (NOT a
+divergence) — *as long as* the firing order and resulting code/message match. If the consolidation
+changes WHICH error wins or its precedence, that IS a 🔴 divergence.
+
 ### Code Quality
 
 | Rule | Details |
