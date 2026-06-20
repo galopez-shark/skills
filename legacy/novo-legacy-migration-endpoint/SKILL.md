@@ -231,14 +231,31 @@ Accept the endpoint by name, number, or Java method name.
    | Código | Mensaje | Condición Java | Condición Go | Estado |
    |--------|---------|----------------|--------------|--------|
 
-8. **Classify each divergence:**
+8. **Build the response comparison (Java vs Go)** — for the happy path AND for each divergent
+   case, show the LITERAL response body each side returns, as paired fenced JSON blocks, so the
+   difference in shape, field names, nesting, values, and `rc`/`msg` is visible at a glance:
+
+   **Caso `<nombre>` — Java (`Clase`)**
+   ```json
+   { "rc": "...", "msg": "...", ... }
+   ```
+   **Caso `<nombre>` — Go (`archivo`)**
+   ```json
+   { "rc": "...", "msg": "...", ... }
+   ```
+
+   Reconstruct each body from the ACTUAL code (resource/handler response builder + DTO + JSON
+   tags), never from memory. Mark field-level diffs inline with a `← ...` note (e.g.
+   `← Java interpola $monto$`, `← Go omite responseCard`, `← campo extra en Go`). Cover at minimum:
+   the success response and one example per divergent business case.
+9. **Classify each divergence:**
    - 🟢 **Mejora intencional** — Go corrige un bug de Java o mejora la estructura (anótalo, no es error)
    - 🔴 **Discrepancia de paridad** — Go diverge incorrectamente → marcar `⚠️ Discrepancia de paridad:`
      citando archivo:línea en ambos lados
    - ⚪ **Caso faltante** — un caso/código de Java no migrado a Go
-9. **Veredicto final:** resumen `N match / M divergencias` por categoría + lista de acciones
-   recomendadas. **No modificar código.** El usuario decide qué corregir; cada corrección entra
-   por el flujo normal de fases.
+10. **Veredicto final:** resumen `N match / M divergencias` por categoría + lista de acciones
+    recomendadas. **No modificar código.** El usuario decide qué corregir; cada corrección entra
+    por el flujo normal de fases.
 
 ### Reglas
 
