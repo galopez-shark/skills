@@ -22,6 +22,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate list` — list all endpoints with migration status
 - `/migrate status <endpoint>` — show phase-level detail for one endpoint
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
+- `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
 
 ---
 
@@ -185,6 +186,63 @@ Show the full migration roadmap with recommended order and effort estimates.
 1. Start migrating the next recommended endpoint
 2. Change the priority order
 3. Create Jira tickets for a wave
+
+---
+
+## Subcommand: `/migrate verify-parity <endpoint>` (alias `simetria`)
+
+Validates the **business-logic symmetry** between the Java legacy source and the Go
+implementation for ONE endpoint. **READ-ONLY** — it never edits code. It produces a
+per-endpoint parity report and flags every divergence for the user to decide on; any fix
+afterwards goes through the normal phase/branch flow (parity rule: flag, then wait for approval).
+
+Accept the endpoint by name, number, or Java method name.
+
+### Workflow
+
+1. **Load `.migration-context.yaml`** — if missing, tell the user to run `/migration-context` first.
+2. **Resolve the endpoint** in `endpoint_inventory`. If `status: not_started` → there is no Go
+   side to compare; tell the user and suggest `/migrate <endpoint>` instead. Stop.
+3. **Locate both sides:**
+   - Java: the `java_file` handler/resource + its service + dao (from `source_repos[].paths`).
+   - Go: `internal/modules/<go_module>/{handlers,service,repository}`.
+   - Properties files for error codes/messages (IMMUTABLE source of truth).
+4. **Read Java FIRST, then Go** — never assume Go behavior; extract from the actual code.
+5. **Extract the business cases from BOTH sides:**
+   - Validation order (each guard + the condition that triggers it)
+   - Error codes + EXACT messages, and the condition that fires each
+   - Flow branches (happy path + every early return)
+   - External-call handling (success / 4xx / 5xx / timeout / compensation-reversal)
+   - Response shape (field names, nesting, null vs omitempty)
+   - Defaults and date formats
+6. **Build the symmetry matrix** (one row per business case):
+
+   | Caso de negocio | Java (`Clase.metodo:línea`) | Go (`archivo.func:línea`) | Estado |
+   |-----------------|------------------------------|----------------------------|--------|
+
+   Estados: `✅ match` · `⚠️ divergencia` · `❌ falta en Go` · `➕ extra en Go`
+
+7. **Build the error-code parity table** (messages are immutable → any text diff is `⚠️`):
+
+   | Código | Mensaje | Condición Java | Condición Go | Estado |
+   |--------|---------|----------------|--------------|--------|
+
+8. **Classify each divergence:**
+   - 🟢 **Mejora intencional** — Go corrige un bug de Java o mejora la estructura (anótalo, no es error)
+   - 🔴 **Discrepancia de paridad** — Go diverge incorrectamente → marcar `⚠️ Discrepancia de paridad:`
+     citando archivo:línea en ambos lados
+   - ⚪ **Caso faltante** — un caso/código de Java no migrado a Go
+9. **Veredicto final:** resumen `N match / M divergencias` por categoría + lista de acciones
+   recomendadas. **No modificar código.** El usuario decide qué corregir; cada corrección entra
+   por el flujo normal de fases.
+
+### Reglas
+
+- Mensajes y códigos de error son **inmutables** — se exige match exacto de texto.
+- **Solo reporta** — nunca aplica cambios. Recomienda; el usuario aprueba.
+- Si el endpoint no está migrado → no hay nada que comparar; sugiere `/migrate <endpoint>`.
+- Una discrepancia que el reporte declare "incorrecta" debe verificarse contra el Java real antes
+  de proponer fix (el hallazgo puede contradecir la paridad — leer el do-while/for de Java primero).
 
 ---
 
