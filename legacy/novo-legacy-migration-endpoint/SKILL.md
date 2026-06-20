@@ -257,10 +257,11 @@ Accept the endpoint by name, number, or Java method name.
    - External-call handling (success / 4xx / 5xx / timeout / compensation-reversal)
    - Response shape (field names, nesting, null vs omitempty)
    - Defaults and date formats
-6. **Build the symmetry matrix** (one row per business case):
+6. **Build the symmetry matrix** (one row per business case). The **`#` column is the stable case
+   ID** — the user references these ids later in `parity-solve`, so number every row sequentially:
 
-   | Caso de negocio | Java (`Clase.metodo:línea`) | Go (`archivo.func:línea`) | Estado |
-   |-----------------|------------------------------|----------------------------|--------|
+   | # | Caso de negocio | Java (`Clase.metodo:línea`) | Go (`archivo.func:línea`) | Estado |
+   |---|-----------------|------------------------------|----------------------------|--------|
 
    Estados: `✅ match` · `⚠️ divergencia` · `❌ falta en Go` · `➕ extra en Go`
 
@@ -291,9 +292,15 @@ Accept the endpoint by name, number, or Java method name.
    - 🔴 **Discrepancia de paridad** — Go diverge incorrectamente → marcar `⚠️ Discrepancia de paridad:`
      citando archivo:línea en ambos lados
    - ⚪ **Caso faltante** — un caso/código de Java no migrado a Go
-10. **Veredicto final:** resumen `N match / M divergencias` por categoría + lista de acciones
-    recomendadas. **No modificar código.** El usuario decide qué corregir; cada corrección entra
-    por el flujo normal de fases.
+10. **Veredicto final:** resumen `N match / M divergencias` por categoría. **Lista explícitamente
+    los IDs (`#`) de los casos divergentes** (`⚠️`/`🔴`/`⚪`) agrupados por categoría, y cierra
+    invitando a corregirlos:
+
+    > Para preparar los fixes de paridad: `/migrate parity-solve {endpoint} cases (<ids>)`
+    > (ej. `cases (9,10,11)`). Roadmap con cap ≤300 líneas / ≤10 files por fase.
+
+    **No modificar código.** El usuario decide qué IDs corregir; cada corrección entra por el flujo
+    normal de fases vía `parity-solve`.
 
 ### Reglas
 
