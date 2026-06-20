@@ -466,6 +466,30 @@ Using `source.paths` from `.migration-context.yaml`:
 
 ---
 
+## STEP 0b — Reprocessing / rule-consolidation review (MANDATORY)
+
+Right after the source analysis (and before the roadmap), identify EVERY place the legacy code
+**repeats a read or re-validates the same data across layers** (reprocessing). Present a Java→Go
+side-by-side and **ask the user to confirm the consolidation** before planning any phase.
+
+> Mira: **en Java esto se hace así (reproceso) → en Go queda consolidado así (mismo resultado, sin
+> reproceso).** ¿Confirmas la consolidación?
+
+| Regla / dato | Java (dónde + nº de accesos) | Go (consolidado) | Reproceso evitado |
+|--------------|------------------------------|------------------|-------------------|
+| {ej. Card details} | `getUserData` + `isCardStatusValidation` + `isCardExpiryDateValidation` → 3× `getCardDetails` | 1× `GetCustomer`, checks en orden | 2 lecturas DB |
+| {ej. …} | … | … | … |
+
+Rules for this step:
+- **Preserve the business OUTCOME and the order of precedence** — the check that fires first in Java
+  must fire first in Go (same winning code/message). If a consolidation would change WHICH error wins,
+  it is a 🔴 divergence — flag it and do NOT consolidate without explicit approval.
+- If the source does NOT repeat reads/validations, state "sin reprocesos detectados" and move on.
+- **Wait for the user to confirm** the consolidation table before STEP 1. The confirmed consolidations
+  are then reflected in the phase plan and called out in the PR.
+
+---
+
 ## STEP 1 — Present Phase Roadmap (MANDATORY — show BEFORE any code)
 
 ### Phase limits (HARD RULES — ENFORCED AT ALL TIMES)
