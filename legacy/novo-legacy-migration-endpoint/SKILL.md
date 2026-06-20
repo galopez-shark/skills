@@ -337,8 +337,10 @@ Usage: `/migrate parity-solve cashin cases (9,10,11)`
 5. **Group changes into phases under the cap** — **≤300 new lines AND ≤10 files per phase** (impl +
    tests). If the selected cases exceed it, split into `parity-1`, `parity-2`, … Each phase includes
    tests, `make check` (0 issues, coverage ≥85%), and a version bump.
-6. **Present the roadmap and WAIT for approval.** Then execute phase by phase using the normal Phase
-   START/END sequence (branch `feature/{ticket}-parity-{n}` from `main`, one phase merged before the next).
+6. **Present the roadmap and WAIT for approval.** Before creating any branch, **ASK the user for the
+   Jira epic/ticket** to use for these parity fixes (if not already known). Then execute phase by
+   phase using the normal Phase START/END sequence: **always `git checkout main && git pull` first,
+   then create** `feature/{ticket}-parity-{n}` **from `main`** — one phase merged before the next.
 
 ### Output (roadmap)
 
@@ -608,13 +610,15 @@ The number of phases varies per endpoint (3 to 7+). The rule is the same regardl
 ### Phase START sequence (EVERY phase)
 
 1. **Confirm merge**: "Is Phase N merged to main?"
-2. `git checkout main && git pull`
-3. Verify go-bricks version — if outdated, update branch FIRST
-4. `git checkout -b {branch_prefix}{ticket}-{phase}` — **from main**
-5. Explore existing modules for reusable code
-6. **Check go-bricks** for any new helpers relevant to this phase
-7. Announce what this phase implements — get confirmation
-8. **go-bricks VALIDATION GATE** — run the checklist below before writing any code
+2. **Confirm the Jira epic/ticket** — if the ticket (or epic) for this work is NOT already known,
+   **ASK the user for it before creating any branch**. Never branch without a ticket reference.
+3. `git checkout main && git pull` — **every branch ALWAYS starts from `main`** (stash/commit dirty tree first)
+4. Verify go-bricks version — if outdated, update branch FIRST
+5. **Create the branch:** `git checkout -b {branch_prefix}{ticket}-{phase}` — **from main** (do create it, don't skip)
+6. Explore existing modules for reusable code
+7. **Check go-bricks** for any new helpers relevant to this phase
+8. Announce what this phase implements — get confirmation
+9. **go-bricks VALIDATION GATE** — run the checklist below before writing any code
 
 #### go-bricks Validation Gate (MANDATORY — runs at end of every Phase START)
 
