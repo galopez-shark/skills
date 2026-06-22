@@ -25,6 +25,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
 - `/migrate parity-solve <endpoint> cases (<ids>)` (alias `solve-parity`) — plan fixes for the selected verify-parity divergences (≤300 new lines / ≤10 files per phase)
 - `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list for the endpoint (for QA testing of the Go version)
+- `/migrate techdoc <endpoint>` (alias `doc-tecnico`) — generate the technical doc (scope, glossary, structure, construction) + class/flow/data diagrams as images (asks for the output folder)
 - `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
 
 ---
@@ -49,6 +50,8 @@ SUBCOMMANDS
                                STRICTER cap: ≤300 new lines / ≤10 files per phase (alias: solve-parity).
   /migrate usecases <ep>       Extract the Java use-case / test-scenario list (happy + negative + edge
                                + external + auth) for QA to test the Go endpoint (alias: casos).
+  /migrate techdoc <ep>        Technical doc (scope, glossary, structure, construction) + class/flow/
+                               data diagrams as images. ASKS for the output folder (alias: doc-tecnico).
   /migrate help                This help (alias: ?).
 
 REQUIRES  .migration-context.yaml — run /migration-context first to create it.
@@ -420,6 +423,47 @@ touches no code. Feeds the QA ticket of the docs/cert phase.
 - One row per distinct outcome/branch + the edge cases above. Codes/messages exact (runtime-verified).
 - **READ-ONLY** — output is for QA/test planning; no code changes, no branch.
 - This is the input for the QA ticket (Definition of Done: "Ticket de QA con flujo completo + tabla de errores").
+
+---
+
+## Subcommand: `/migrate techdoc <endpoint>` (alias `doc-tecnico`)
+
+Generates the endpoint's **technical document** (in text) + **three diagrams as images** (class, flow,
+data). Reads Java + Go; READ-ONLY on the project code — it only writes the diagram/image files into
+the folder the user specifies.
+
+### Step 0 — ASK for the output folder (MANDATORY, first)
+
+Before generating anything, **ask the user for the destination folder** where the diagram images will
+be generated. Do NOT assume the path. Create the folder if it doesn't exist (`mkdir -p`).
+
+### Text content (derived from Java spec + Go real code — never invent)
+
+1. **Alcance** — qué hace el endpoint, ruta/método, entradas y salidas, qué cubre y qué NO (fuera de scope).
+2. **Definiciones, acrónimos y abreviaturas** — glosario SOLO de lo que aplica al endpoint
+   (p.ej. JWE, RC, PAN, tagPay, cardToken, SGC, KYC, PB, AppError, go-bricks, JWE/RSA, Oracle…).
+3. **Estructura** — módulo y capas (`domain`/`repository`/`service`/`handlers`), archivos, dependencias,
+   y qué se reutiliza (helpers/clients compartidos).
+4. **Construcción** — cómo se arma con go-bricks (wiring en `module.go`, registro de rutas, config,
+   cifrado), fases de migración y pruebas.
+
+### Diagrams (generate as IMAGES in the folder)
+
+- **Diagrama de clases** — structs/interfaces Go (Service, Handler, DTOs, repos, clients) y relaciones.
+- **Diagrama de flujo** — flujo de la petición por capa (middleware → handler → service → repo/externos),
+  happy path + ramas de error.
+- **Diagrama de datos** — tablas Oracle involucradas + relaciones (ER) / modelo de datos.
+
+For each, write a PlantUML source into the folder (`<endpoint>-clases.plantuml`, `-flujo.plantuml`,
+`-datos.plantuml`) and **render it to an image** (PNG): use the `plantuml` CLI if available
+(`plantuml -tpng <file>`), else Docker (`plantuml/plantuml`), else save the `.plantuml` and give the
+user the exact render command. Confirm the generated image paths at the end.
+
+### Rules
+
+- **ASK for the folder FIRST, always** — create it if missing; never assume.
+- Content derived from the Java source (spec) + the real Go code — do not invent.
+- READ-ONLY on the project repo; the ONLY writes are the diagram/image files in the chosen folder.
 
 ---
 
