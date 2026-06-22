@@ -24,6 +24,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
 - `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
 - `/migrate parity-solve <endpoint> cases (<ids>)` (alias `solve-parity`) — plan fixes for the selected verify-parity divergences (≤300 new lines / ≤10 files per phase)
+- `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list for the endpoint (for QA testing of the Go version)
 - `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
 
 ---
@@ -46,6 +47,8 @@ SUBCOMMANDS
   /migrate parity-solve <ep> cases (1,2,3)
                                Plan fixes for the SELECTED verify-parity cases. Roadmap respects a
                                STRICTER cap: ≤300 new lines / ≤10 files per phase (alias: solve-parity).
+  /migrate usecases <ep>       Extract the Java use-case / test-scenario list (happy + negative + edge
+                               + external + auth) for QA to test the Go endpoint (alias: casos).
   /migrate help                This help (alias: ?).
 
 REQUIRES  .migration-context.yaml — run /migration-context first to create it.
@@ -376,6 +379,47 @@ Phases (≤300 líneas · ≤10 files c/u):
 - **Verify each case against Java before fixing** — messages/codes are immutable, match exactly.
 - **Only fix the selected cases** — never touch cases the user didn't choose.
 - One branch per phase from `main`; tests + `make check` + version bump per phase; no commit without approval.
+
+---
+
+## Subcommand: `/migrate usecases <endpoint>` (alias `casos`)
+
+Extracts, from the **Java source** (the spec), the full list of **use cases / test scenarios** for
+the endpoint — so QA can test the migrated Go version. **READ-ONLY** — produces a test-case catalog,
+touches no code. Feeds the QA ticket of the docs/cert phase.
+
+### Workflow
+
+1. **Load `.migration-context.yaml`** and resolve the endpoint.
+2. **Read the Java source** (resource + service + dao) + `RESPONSE_CODES.properties` (runtime) — same
+   source-of-truth as `verify-parity`. Read Java FIRST; derive scenarios ONLY from the real code, never invent.
+3. **Enumerate EVERY scenario** the endpoint can produce:
+   - **Happy path(s)** — including variants (e.g. card ACTIVE vs PB, with/without optional fields).
+   - **Negative** — one per validation/error branch, with the INPUT that triggers it and the exact
+     `rc`/`msg`/HTTP expected (codes from RESPONSE_CODES).
+   - **Edge** — empty/missing fields, boundaries (montos min/max, rango de fechas 90d, longitudes
+     dataMfetch 250), fechas invertidas, tarjeta vencida/bloqueada/cancelada, cliente inactivo,
+     body no descifrable / JWE inválido.
+   - **External** — fallo del servicio externo (4xx/5xx/timeout) y compensación/reverso si aplica.
+   - **Estado DB** — qué queda en Oracle tras éxito vs rechazo (transacción PROCESSED/REJECTED, etc.).
+   - **Auth** — token ausente/inválido/vencido (`-122`/`-102`); `switch:1` (respuesta plana) si aplica.
+4. **Present the test-case catalog** (QA-oriented):
+
+   | # | Caso | Tipo | Precondición / Input | Resultado esperado (`rc` · msg · HTTP) |
+   |---|------|------|----------------------|----------------------------------------|
+
+   Tipos: ✅ positivo · ❌ negativo · 🔶 edge · 🌐 externo · 🔐 auth.
+
+5. **"Consideraciones para QA"** — qué preparar/tener en cuenta: datos (cliente/tarjeta y su estado,
+   montos), headers (`Authorization`, `switch`), body JWE, límites, cómo simular fallos de externos,
+   idempotencia, y los datos del ambiente TEST.
+
+### Rules
+
+- Derive scenarios ONLY from the Java source + `RESPONSE_CODES` — do not invent cases.
+- One row per distinct outcome/branch + the edge cases above. Codes/messages exact (runtime-verified).
+- **READ-ONLY** — output is for QA/test planning; no code changes, no branch.
+- This is the input for the QA ticket (Definition of Done: "Ticket de QA con flujo completo + tabla de errores").
 
 ---
 
