@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.1.0"
+  version: "4.2.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap
   role: specialist
@@ -315,16 +315,38 @@ Accept the endpoint by name, number, or Java method name.
     **No modificar código.** El usuario decide qué IDs corregir; cada corrección entra por el flujo
     normal de fases vía `parity-solve`.
 
-11. **Sección "Bugs Java detectados" (parity, pero para bugs):** además de las divergencias, reporta
-    cualquier **bug crítico** encontrado al leer el fuente Java (corrupción de datos, seguridad,
-    resultado/monto incorrecto, pérdida de dinero). Por cada uno:
+11. **Sección "Bugs Java detectados":** además de las divergencias de paridad, reporta TODOS los
+    bugs encontrados al leer el fuente Java, clasificados por severidad:
 
-    > `⚠️ Bug Java detectado:` {qué} · severidad · impacto · ubicación (`Clase.metodo:línea`) ·
+    **11a. Bugs críticos** (corrupción de datos, seguridad, resultado/monto incorrecto, pérdida de dinero):
+
+    > `⚠️ Bug Java crítico:` {qué} · severidad · impacto · ubicación (`Clase.metodo:línea`) ·
     > mitigación propuesta en Go
 
-    Las reglas de negocio de Java son la spec y se respetan por defecto; un bug crítico es la única
-    excepción y **se DECIDE con el usuario** (mitigar en Go o replicar tal cual) — no se corrige ni se
-    replica en silencio. Si no hay, indica "sin bugs críticos detectados".
+    Se **DECIDE con el usuario** (mitigar en Go o replicar tal cual) — no se corrige ni se replica
+    en silencio.
+
+    **11b. Bugs de respuesta** (código/mensaje incorrecto para la condición — el error llega al usuario
+    con un código genérico o un mensaje que no describe el problema real). Estos son muy comunes en
+    el legacy: excepciones no tipadas que caen en un `catch(Exception)` genérico produciendo `-2000`
+    cuando deberían usar un código específico (ej. `-1002` para parámetro requerido, `-1003` para
+    formato inválido). Por cada uno:
+
+    > `🔶 Bug Java respuesta:` {condición que lo dispara} · código Java actual (`rc`/`msg`) ·
+    > código correcto según RESPONSE_CODES · ubicación (`Clase.metodo:línea`) ·
+    > estado en Go: `✅ corregido` / `❌ replica el bug` / `⚪ no migrado aún`
+
+    Construir la tabla de bugs de respuesta:
+
+    | # | Condición | Java (`rc` · `msg`) | Correcto (`rc` · `msg` según RESPONSE_CODES) | Go estado | Ubicación Java |
+    |---|-----------|---------------------|-----------------------------------------------|-----------|----------------|
+
+    Estos bugs NO requieren aprobación del usuario para corregir en Go — son mejoras claras de
+    calidad de respuesta. Se corrigen usando los códigos de RESPONSE_CODES.properties que ya existen
+    para ese tipo de error. Si Go ya los corrigió, marcar `✅ corregido`; si no, marcar `❌ replica
+    el bug` y sugerir el fix como caso adicional para `parity-solve`.
+
+    Si no hay bugs de ningún tipo, indicar "sin bugs detectados".
 
 ### Reglas
 
@@ -415,14 +437,39 @@ touches no code. Feeds the QA ticket of the docs/cert phase.
    - **Auth** — token ausente/inválido/vencido (`-122`/`-102`); `switch:1` (respuesta plana) si aplica.
 4. **Present the test-case catalog** (QA-oriented):
 
-   | # | Caso | Tipo | Precondición / Input | Resultado esperado (`rc` · msg · HTTP) |
-   |---|------|------|----------------------|----------------------------------------|
+   | # | Caso | Tipo | Precondición / Input | Resultado esperado (`rc` · msg · HTTP) | Bug legacy |
+   |---|------|------|----------------------|----------------------------------------|------------|
 
    Tipos: ✅ positivo · ❌ negativo · 🔶 edge · 🌐 externo · 🔐 auth.
+
+   **Columna "Bug legacy"** — para cada caso, verificar si Java produce una respuesta incorrecta
+   (código genérico, mensaje equivocado, excepción no tipada que cae en catch genérico). Valores:
+   - `—` → Java responde correctamente para este caso
+   - `🔶 Java: rc X / msg "Y"` → Java produce un código/mensaje incorrecto; el "Resultado esperado"
+     de la tabla ya muestra el valor CORRECTO (el que Go debe usar según RESPONSE_CODES). Agregar
+     entre paréntesis si Go ya lo corrigió: `(Go ✅ corregido)` o `(Go ❌ pendiente)`.
+
+   Ejemplo:
+   ```
+   | 5 | transactionCode vacío | ❌ | Sin query param | rc: -1002 · "Error parametros requeridos: [transactionCode]" | 🔶 Java: rc -2000 / "Error General" (Go ✅ corregido) |
+   ```
 
 5. **"Consideraciones para QA"** — qué preparar/tener en cuenta: datos (cliente/tarjeta y su estado,
    montos), headers (`Authorization`, `switch`), body JWE, límites, cómo simular fallos de externos,
    idempotencia, y los datos del ambiente TEST.
+6. **"Bugs legacy detectados"** — sección de resumen al final del documento con TODOS los casos donde
+   Java produce una respuesta incorrecta. Tabla consolidada:
+
+   | # caso | Condición | Java (`rc` · `msg`) | Correcto (`rc` · `msg` según RESPONSE_CODES) | Go estado |
+   |--------|-----------|---------------------|-----------------------------------------------|-----------|
+
+   Incluir una nota explicativa: "Estos bugs son condiciones donde Java produce un código/mensaje
+   genérico (típicamente `-2000` por `catch(Exception)` no tipado) en lugar del código específico
+   definido en RESPONSE_CODES.properties. El 'Resultado esperado' en la tabla principal ya refleja
+   el valor correcto."
+
+   Si todos los casos de la tabla tienen `—` en "Bug legacy" (Java responde correctamente en todos),
+   indicar "sin bugs legacy detectados" y omitir la tabla.
 
 ### Rules
 
@@ -430,6 +477,7 @@ touches no code. Feeds the QA ticket of the docs/cert phase.
 - One row per distinct outcome/branch + the edge cases above. Codes/messages exact (runtime-verified).
 - **READ-ONLY** — output is for QA/test planning; no code changes, no branch.
 - This is the input for the QA ticket (Definition of Done: "Ticket de QA con flujo completo + tabla de errores").
+- **Bug legacy column is MANDATORY** — every row must have either `—` or the bug annotation. Never skip this analysis.
 
 ---
 
