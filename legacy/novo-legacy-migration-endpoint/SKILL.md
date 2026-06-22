@@ -261,7 +261,14 @@ Accept the endpoint by name, number, or Java method name.
    - Error codes + EXACT messages, and the condition that fires each
    - Flow branches (happy path + every early return)
    - External-call handling (success / 4xx / 5xx / timeout / compensation-reversal)
-   - Response shape (field names, nesting, null vs omitempty)
+   - **Response serialization parity (null/empty handling) — ALWAYS check this:** Java serializes with
+     `@JsonInclude(NON_NULL/NON_EMPTY)` (omite campos null y vacíos), Go solo omite con `omitempty`.
+     Revisa **cada DTO de respuesta Y sus campos heredados** (clases base Java que la respuesta
+     `extends`, p.ej. `SumTotalsResult extends Transactions` — el base aporta decenas de campos).
+     Marca ⚠️ cuando:
+       · un campo string vacío que Go **pinta** (`"x":""`) pero Java **omite** → falta `omitempty` en Go;
+       · un campo que Go omite por `omitempty` pero Java sí renderiza (p.ej. número no-null) → quitar omitempty / usar puntero;
+       · un campo presente en Go que Java no envía, o viceversa.
    - Defaults and date formats
 6. **Build the symmetry matrix** (one row per business case). The **`#` column is the stable case
    ID** — the user references these ids later in `parity-solve`, so number every row sequentially:
