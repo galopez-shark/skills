@@ -24,7 +24,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
 - `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
 - `/migrate parity-solve <endpoint> cases (<ids>)` (alias `solve-parity`) — plan fixes for the selected verify-parity divergences (≤300 new lines / ≤10 files per phase)
-- `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list for the endpoint (for QA testing of the Go version)
+- `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list (testRigor-style, con IDs `EST-NN`) — QA testing del Go + base de la tabla de escenarios del Plan de Desarrollo
 - `/migrate techdoc <endpoint>` (alias `doc-tecnico`) — generate the technical doc (scope, glossary, structure, construction) + class/flow/data diagrams as images (asks for the output folder)
 - `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
 
@@ -49,7 +49,8 @@ SUBCOMMANDS
                                Plan fixes for the SELECTED verify-parity cases. Roadmap respects a
                                STRICTER cap: ≤300 new lines / ≤10 files per phase (alias: solve-parity).
   /migrate usecases <ep>       Extract the Java use-case / test-scenario list (happy + negative + edge
-                               + external + auth) for QA to test the Go endpoint (alias: casos).
+                               + external + auth), testRigor-style con IDs EST-NN — QA del Go +
+                               base de la tabla de escenarios del Plan de Desarrollo (alias: casos).
   /migrate techdoc <ep>        Technical doc (scope, glossary, structure, construction) + class/flow/
                                data diagrams as images. ASKS for the output folder (alias: doc-tecnico).
   /migrate help                This help (alias: ?).
@@ -63,7 +64,7 @@ KEY RULES
   • Parity: error codes/messages/flows must match Java (flag bugs, don't replicate).
   • verify-parity always checks out main first.
   • The route-enabling phase adds the endpoint to the Postman collection.
-  • PR title: `feat: <desc> (CEB-XXXX)`. No commit without explicit approval.
+  • PR title: `feat: <desc lowercase> (CEB-XXXX)`, ≤72 chars (NKH1). No commit without explicit approval.
 ```
 
 After printing, ask what the user wants to do next (list / roadmap / migrate / verify-parity).
@@ -270,6 +271,39 @@ Accept the endpoint by name, number, or Java method name.
        · un campo que Go omite por `omitempty` pero Java sí renderiza (p.ej. número no-null) → quitar omitempty / usar puntero;
        · un campo presente en Go que Java no envía, o viceversa.
    - Defaults and date formats
+
+5b. **Trampas de FALSA PARIDAD (OBLIGATORIO — nunca declares `✅ match` sin descartar estas).**
+   Un check que "existe" en Go NO garantiza paridad. Para CADA validación/campo, verifica en el
+   código REAL (no por el nombre ni por presencia del check) y marca `⚠️` si difiere:
+
+   1. **Formato de dato** — el mismo campo puede tener formato distinto (ej. fecha de expiración
+      `yyMM` vs `MMYY`, `YYYY-MM-DD` vs epoch). Un parseo con el formato equivocado suele
+      **retornar "no aplica" en silencio** y **desactivar la validación** (la tarjeta vencida pasa).
+      Confirma el formato REAL de la DB/propiedad y cómo lo parsea Java vs Go.
+   2. **Comparación config-driven** — Java a menudo lee un valor de properties Y **la semántica de la
+      comparación importa** (ej. `isMaxAmount` compara `amount.length() > MAX_AMOUNT.length()` —
+      ¡por LONGITUD de string, no por valor numérico!). Lee CÓMO compara, no solo el umbral. Si Go
+      usa comparación numérica donde Java usa longitud (o viceversa) → `⚠️`. El valor debe venir por
+      config/env igual que en Java, no hardcodeado.
+   3. **Colapso a nivel query/SQL** — un `WHERE`/JOIN puede volver **inalcanzable** un código de error
+      (ej. filtrar por `cardToken` en el WHERE elimina la fila del cliente → Go devuelve `-2023`
+      "usuario no existe" en vez de `-2029` "tarjeta no registrada"). Rastrea si CADA código de error
+      es realmente alcanzable con la query actual.
+   4. **Obligatorio vs opcional** — un campo vacío/ausente puede dar error en Java pero un default
+      silencioso en Go (ej. `cardToken` vacío → `-2029` en Java; Go tomaba la primera tarjeta activa).
+      Verifica qué hace cada lado con vacío/ausente.
+   5. **Alcanzabilidad / código muerto** — que Go tenga el código `-2029` en una función NO significa
+      que se ejecute. **Traza el camino de principio a fin**; si una rama es inalcanzable, no es paridad.
+   6. **Precedencia/orden** — reordenar/consolidar validaciones en Go es **intencional (rendimiento)** y
+      NO es divergencia por sí mismo → 🟢. Lo ÚNICO que importa es el **resultado**: si para un input con
+      varias violaciones el **código/mensaje que gana** sigue siendo el mismo que en Java, es paridad.
+      Marca `⚠️` **solo** si el reorden cambia cuál error recibe el cliente (ej. Go devuelve `-2047`
+      donde Java devolvía `-2050`); si el ganador es el mismo, no lo marques aunque el orden difiera.
+   7. **Semántica del valor** — verifica la comparación real (`>`, `>=`, `<`, longitud, canónico),
+      no solo que el check exista.
+
+   Regla de oro: **ante la duda, es divergencia** — no declares paridad por inspección superficial.
+
 6. **Build the symmetry matrix** (one row per business case). The **`#` column is the stable case
    ID** — the user references these ids later in `parity-solve`, so number every row sequentially:
 
@@ -350,6 +384,9 @@ Accept the endpoint by name, number, or Java method name.
 
 ### Reglas
 
+- **Falsa paridad = el peor error del análisis.** Antes de declarar `✅ match` en cualquier caso,
+  corre el checklist **5b (trampas de falsa paridad)** contra el código REAL de ambos lados. Declarar
+  "match" donde hay divergencia hace fugar un bug a producción; ante la mínima duda, marca `⚠️`.
 - Mensajes y códigos de error son **inmutables** — se exige match exacto de texto.
 - **Solo reporta** — nunca aplica cambios. Recomienda; el usuario aprueba.
 - Si el endpoint no está migrado → no hay nada que comparar; sugiere `/migrate <endpoint>`.
@@ -417,8 +454,27 @@ Phases (≤300 líneas · ≤10 files c/u):
 ## Subcommand: `/migrate usecases <endpoint>` (alias `casos`)
 
 Extracts, from the **Java source** (the spec), the full list of **use cases / test scenarios** for
-the endpoint — so QA can test the migrated Go version. **READ-ONLY** — produces a test-case catalog,
-touches no code. Feeds the QA ticket of the docs/cert phase.
+the endpoint — redactados con disciplina de test-case writing — para que QA pruebe la versión Go
+**y** para que sea la **BASE directa de la tabla de Pruebas Unitarias (EST-XX) del Plan de Desarrollo**
+(techdoc). **READ-ONLY** — produces a test-case catalog, touches no code. Feeds the QA ticket de la
+fase docs/cert y el Plan de Desarrollo.
+
+### Principios de redacción (testRigor — how-to-write-test-cases)
+
+Fuente: `testrigor.com/blog/how-to-write-test-cases-detailed-examples`. Cada caso se redacta así:
+
+- **Consistencia** — mismo formato/estructura para todos los casos.
+- **Claridad + atomicidad** — pasos concisos y **un solo objetivo por caso** (nunca validar varios
+  `rc` en un mismo caso; un branch → un caso).
+- **Cobertura** — positivos **y** negativos, más edge / externo / auth / estado DB.
+- **Datos definidos** — input y precondición explícitos y accionables (valor exacto, no "un monto malo").
+- **Trazabilidad (clave para migración)** — cada caso lleva un **ID estable `EST-NN`** y su **Origen
+  Java** (clase/método/branch de donde sale). Ese `EST-NN` se **reusa tal cual** en la tabla de
+  Pruebas Unitarias del Plan de Desarrollo → un solo lenguaje entre QA, dev y el plan.
+- **Sin suposiciones** — derivar SOLO del código Java + `RESPONSE_CODES`; jamás inventar un caso.
+- **Campos por caso** (fields testRigor adaptados al API): ID · título · tipo · prioridad ·
+  precondición · datos de entrada · pasos/reproducción · resultado esperado (`rc`·msg·HTTP·objeto) ·
+  verificación (log/BD/HTTP) · postcondición (estado DB) · origen Java.
 
 ### Workflow
 
@@ -435,12 +491,33 @@ touches no code. Feeds the QA ticket of the docs/cert phase.
    - **External** — fallo del servicio externo (4xx/5xx/timeout) y compensación/reverso si aplica.
    - **Estado DB** — qué queda en Oracle tras éxito vs rechazo (transacción PROCESSED/REJECTED, etc.).
    - **Auth** — token ausente/inválido/vencido (`-122`/`-102`); `switch:1` (respuesta plana) si aplica.
-4. **Present the test-case catalog** (QA-oriented):
 
-   | # | Caso | Tipo | Precondición / Input | Resultado esperado (`rc` · msg · HTTP) | Bug legacy |
-   |---|------|------|----------------------|----------------------------------------|------------|
+3b. **Precisión de mensaje y OBJETO de response (OBLIGATORIO).** Para cada caso, no basta el `rc`:
+   captura **el `msg` EXACTO** (texto literal de RESPONSE_CODES, con interpolaciones resueltas —
+   `$monto$`, `[param]`, espacios finales) **y la forma del objeto de response** que debe devolverse:
+   qué campos aparecen, cuáles se omiten y con qué valores. Reconstrúyelo del **response builder real**
+   (resource/handler + DTO + tags/`@JsonInclude`), nunca de memoria. Ten en cuenta:
+   - campos que solo aparecen en éxito (ej. `transactionIdentifier`, `transactionDate`, `card`);
+   - campos que Java omite (NON_NULL/NON_EMPTY) vs los que Go pinta (`omitempty` o no);
+   - el objeto/estructura de éxito puede diferir del de error (rc≠0 suele traer solo `rc`/`msg`).
+   Este objeto esperado es lo que QA valida byte-a-byte, así que debe ser **exacto**.
 
-   Tipos: ✅ positivo · ❌ negativo · 🔶 edge · 🌐 externo · 🔐 auth.
+4. **Present the test-case catalog** (QA + **base del Plan de Desarrollo**):
+
+   | EST | Caso (título) | Tipo | Prio | Precondición | Entrada (delta) | Resultado esperado (`rc` · msg · HTTP) | Verificación (log/BD/HTTP) | Origen Java | Bug legacy |
+   |-----|---------------|------|------|--------------|-----------------|----------------------------------------|----------------------------|-------------|------------|
+
+   - **EST** — ID estable correlativo `EST-01`, `EST-02`, … Es la **columna puente**: estos mismos
+     IDs se copian a la tabla de Pruebas Unitarias del Plan de Desarrollo (techdoc). No renumerar.
+   - **Tipos**: ✅ positivo · ❌ negativo · 🔶 edge · 🌐 externo · 🔐 auth.
+   - **Prio**: 🔴 alta (flujo de dinero / seguridad) · 🟠 media · 🟡 baja.
+   - **Entrada (delta)**: qué cambiar sobre el *request base* (ver 4c) para disparar el caso — valor exacto.
+   - **Verificación**: cómo confirma QA — línea de log esperada, estado en Oracle (`TP`/`TR`/`TRR`),
+     y/o shape del body HTTP. Es el "cómo verificar" que exige el escenario del Plan de Desarrollo.
+   - **Origen Java**: clase/método/branch del que sale el caso (trazabilidad al spec).
+
+   Esta tabla **ES** la base de la tabla `[3] Pruebas Unitarias (EST-XX)` del Plan de Desarrollo:
+   el `techdoc`/plan la consume tal cual (mismo `EST-NN`, mismo alcance, misma verificación).
 
    **Columna "Bug legacy"** — para cada caso, verificar si Java produce una respuesta incorrecta
    (código genérico, mensaje equivocado, excepción no tipada que cae en catch genérico). Valores:
@@ -451,8 +528,38 @@ touches no code. Feeds the QA ticket of the docs/cert phase.
 
    Ejemplo:
    ```
-   | 5 | transactionCode vacío | ❌ | Sin query param | rc: -1002 · "Error parametros requeridos: [transactionCode]" | 🔶 Java: rc -2000 / "Error General" (Go ✅ corregido) |
+   | EST-05 | transactionCode vacío | ❌ | 🔴 | Token válido; sin query param `transactionCode` | Quitar `transactionCode` del path | rc: -1002 · "Error parametros requeridos: [transactionCode]" · HTTP 200 | Body `{rc,msg}` sin `data`; no inserta en ADMCONS_TRANSACTIONS | ValidationsServiceImpl.validateParams | 🔶 Java: rc -2000 / "Error General" (Go ✅ corregido) |
    ```
+
+4b. **Objeto de response literal (OBLIGATORIO).** Además de la tabla, incluye el **body de respuesta
+   exacto** (JSON) para: el/los happy path(s) y **al menos un caso de error representativo**.
+   Reconstruido del código real, mostrando `rc`, `msg` literal y los campos presentes/omitidos:
+
+   **Éxito**
+   ```json
+   { "rc": "0", "msg": "PROCESS OK", "transactionIdentifier": "…", "transactionDate": "…" }
+   ```
+   **Error (ej. -2029)**
+   ```json
+   { "rc": "-2029", "msg": "Error la tarjeta no esta registrada" }
+   ```
+   Esto le da a QA el objeto exacto a validar (shape + msg), no solo el código.
+
+4c. **Ejemplo de REPRODUCCIÓN por caso (OBLIGATORIO).** Cada caso debe indicar **cómo dispararlo**
+   con un request concreto, para que QA lo replique sin adivinar. Estructura recomendada:
+   - **Request base** (una vez): método + ruta, headers requeridos con **valores válidos** (ej.
+     `Authorization: Bearer <token>`, `country: Pa`, `language: es`, `channel: mobile`,
+     `Content-Type/Accept: application/json`, y en v2 `X-Identifier-Key: <uuid>`), y el **payload
+     descifrado** del happy path (los campos y valores que producen `rc:0`). Si el body va cifrado
+     (JWE), indícalo: se envía `{"data":"<jwe>"}` cifrando ese payload.
+   - **Delta por caso**: para cada caso de la tabla, di **qué cambiar** sobre el request base para
+     dispararlo (ej. "`amount:"0"` → -2027", "`cardToken:""` → -2029", "reenviar el mismo
+     `X-Identifier-Key` ya procesado → -2073", "usar tarjeta con `expiry` en el pasado → -2050",
+     "header `language:ES` → -1003"). Debe ser accionable: valor exacto + resultado esperado.
+   - Para casos que dependen de estado (tarjeta bloqueada/vencida, usuario dado de baja, cuenta
+     inactiva, fondos insuficientes) indica el **dato/precondición** a preparar en la DB/ambiente.
+   Regla: alguien de QA debe poder **copiar el request base + aplicar el delta** y obtener el `rc`/`msg`
+   y objeto de response documentados, sin interpretar.
 
 5. **"Consideraciones para QA"** — qué preparar/tener en cuenta: datos (cliente/tarjeta y su estado,
    montos), headers (`Authorization`, `switch`), body JWE, límites, cómo simular fallos de externos,
@@ -475,9 +582,21 @@ touches no code. Feeds the QA ticket of the docs/cert phase.
 
 - Derive scenarios ONLY from the Java source + `RESPONSE_CODES` — do not invent cases.
 - One row per distinct outcome/branch + the edge cases above. Codes/messages exact (runtime-verified).
+- **Follow the testRigor writing principles** (see the block above): consistencia, atomicidad
+  (un objetivo por caso), cobertura positiva+negativa, datos definidos, trazabilidad.
+- **`EST-NN` IDs are MANDATORY and stable** — correlativos, no se renumeran; son la columna puente
+  que el Plan de Desarrollo (techdoc) reusa tal cual en su tabla `[3] Pruebas Unitarias`.
+- **Origen Java + Verificación son obligatorios** por caso (trazabilidad al spec y cómo valida QA).
 - **READ-ONLY** — output is for QA/test planning; no code changes, no branch.
-- This is the input for the QA ticket (Definition of Done: "Ticket de QA con flujo completo + tabla de errores").
+- This is the input for the QA ticket (Definition of Done: "Ticket de QA con flujo completo + tabla de errores")
+  **y la base de la tabla de escenarios del Plan de Desarrollo** — misma numeración `EST-NN`.
 - **Bug legacy column is MANDATORY** — every row must have either `—` or the bug annotation. Never skip this analysis.
+- **Message + response object are MANDATORY and exact** — cada caso lleva el `msg` literal (interpolaciones
+  resueltas) y el objeto de response esperado (campos presentes/omitidos), reconstruido del response
+  builder real. Es lo que QA valida byte-a-byte; un `msg` u objeto aproximado invalida la prueba.
+- **Reproduction example is MANDATORY** — incluye un request base (headers válidos + payload descifrado
+  del happy path) y, por caso, el **delta exacto** para dispararlo (valor del campo/header o
+  precondición de estado). QA debe poder copiar-pegar y reproducir sin interpretar.
 
 ---
 
@@ -988,7 +1107,7 @@ changes WHICH error wins or its precedence, that IS a 🔴 divergence.
 | **No source-language refs in comments** | Never mention Java, Jackson, Spring, etc. Check: `grep -rn "Java\|Jackson\|parity\|Spring"` |
 | **Max 7 params** | Group into struct |
 | **Complexity ≤ 15** | Extract helpers |
-| **Comments: WHY not WHAT** | Max 100 chars/line |
+| **Comments: WHY not WHAT** | Short + explicit; ≤100 chars/line default, exceed only when necessary, hard cap 150 |
 | **Extend before add** | Same table → extend existing method |
 | **Constants stay local** | Unexported if single-package use |
 
@@ -1133,8 +1252,11 @@ type fooReq struct {
 ## PR Template
 
 ```markdown
-**Title:** `feat: {description < 70 chars} ({TICKET})`
-(no scope in parentheses after `feat`; append the Jira ticket at the END in parentheses — e.g. `feat: add getLastCardToken domain + service (CEB-5638)`)
+**Title:** `feat: {description, lowercase} ({TICKET})`
+(no scope in parentheses after `feat`; description in lowercase — no capitals except the ticket and
+proper nouns/acronyms; append the Jira ticket at the END — e.g. `feat: add getLastCardToken domain + service (CEB-5638)`)
+**Keep the whole title ≤ 72 chars (NKH1 standard).** Put extra detail in the body, not the subject.
+A title over 72 chars (e.g. ~120) is a nit, not a blocker — but trim scope words to fit.
 
 **Body:**
 
