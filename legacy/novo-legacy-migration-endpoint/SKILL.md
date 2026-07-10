@@ -459,29 +459,44 @@ the endpoint — redactados con disciplina de test-case writing — para que QA 
 (techdoc). **READ-ONLY** — produces a test-case catalog, touches no code. Feeds the QA ticket de la
 fase docs/cert y el Plan de Desarrollo.
 
-### Principios de redacción (testRigor — how-to-write-test-cases)
+### Principios de redacción (test-case writing)
 
-Fuente: `testrigor.com/blog/how-to-write-test-cases-detailed-examples`. Cada caso se redacta así:
+Consolidado de las guías estándar (testRigor, Katalon, Guru99, BrowserStack, TestRail, Testmo).
+Cada caso se redacta así:
 
 - **Consistencia** — mismo formato/estructura para todos los casos.
-- **Claridad + atomicidad** — pasos concisos y **un solo objetivo por caso** (nunca validar varios
-  `rc` en un mismo caso; un branch → un caso).
+- **Claridad + atomicidad** — pasos accionables y **un solo objetivo por caso** (nunca validar varios
+  `rc` en un mismo caso; un branch → un caso). Mantener los pasos mínimos.
+- **Naming accionable** — el título describe la acción y el resultado ("Recarga OK…", "amount ≤ 0 →
+  rechazo"), no algo vago como "probar cashin".
 - **Cobertura** — positivos **y** negativos, más edge / externo / auth / estado DB.
+- **Técnicas de diseño (para enumerar edge/negativos con método, no a ojo):**
+  · **Partición de equivalencia** — agrupa clases válidas/ inválidas por campo (un caso por clase).
+  · **Análisis de valor límite (BVA)** — prueba los bordes: monto `0` / mínimo / **máximo y máximo±1**,
+    longitud `dataMfetch` **250/251**, fechas límite, longitudes de campo.
+  · **Tabla de decisión** — cuando el resultado depende de una combinación (ej. estado tarjeta ×
+    estado cuenta × v1/v2): una fila por combinación relevante.
 - **Datos definidos** — input y precondición explícitos y accionables (valor exacto, no "un monto malo").
+- **Independiente y repetible** — cada caso corre solo (no depende del anterior) y da el **mismo
+  resultado sin importar quién lo ejecute**. Documentar la **limpieza/reversión** del ambiente
+  (ej. la transacción insertada, el `X-Identifier-Key` consumido) para no contaminar corridas.
 - **Trazabilidad (clave para migración)** — cada caso lleva un **ID estable `EST-NN`** y su **Origen
   Java** (clase/método/branch de donde sale). Ese `EST-NN` se **reusa tal cual** en la tabla de
-  Pruebas Unitarias del Plan de Desarrollo → un solo lenguaje entre QA, dev y el plan.
+  Pruebas Unitarias del Plan de Desarrollo → un solo lenguaje entre QA, dev y el plan. Referencia por
+  ID (no repitas un caso: apúntalo por su `EST-NN`).
 - **Sin suposiciones** — derivar SOLO del código Java + `RESPONSE_CODES`; jamás inventar un caso.
-- **Campos por caso** (fields testRigor adaptados al API): ID · título · tipo · prioridad ·
-  precondición · datos de entrada · pasos/reproducción · resultado esperado (`rc`·msg·HTTP·objeto) ·
-  verificación (log/BD/HTTP) · postcondición (estado DB) · origen Java.
+- **Campos por caso** (adaptados al API): ID · título · tipo · prioridad · precondición · datos de
+  entrada · pasos/reproducción · resultado esperado (`rc`·msg·HTTP·objeto) · verificación (log/BD/HTTP)
+  · postcondición/limpieza (estado DB) · origen Java · **[ejecución] Resultado real · Estado (Pass/Fail)**.
+  Las dos columnas de ejecución van **vacías al diseñar** y las llena QA al correr (hoja tipo Excel/Word).
 
 ### Workflow
 
 1. **Load `.migration-context.yaml`** and resolve the endpoint.
 2. **Read the Java source** (resource + service + dao) + `RESPONSE_CODES.properties` (runtime) — same
    source-of-truth as `verify-parity`. Read Java FIRST; derive scenarios ONLY from the real code, never invent.
-3. **Enumerate EVERY scenario** the endpoint can produce:
+3. **Enumerate EVERY scenario** the endpoint can produce — aplica **partición de equivalencia, BVA y
+   tabla de decisión** (ver principios) para cubrir bordes y combinaciones sin dejar casos fuera:
    - **Happy path(s)** — including variants (e.g. card ACTIVE vs PB, with/without optional fields).
    - **Negative** — one per validation/error branch, with the INPUT that triggers it and the exact
      `rc`/`msg`/HTTP expected (codes from RESPONSE_CODES).
@@ -582,8 +597,15 @@ Fuente: `testrigor.com/blog/how-to-write-test-cases-detailed-examples`. Cada cas
 
 - Derive scenarios ONLY from the Java source + `RESPONSE_CODES` — do not invent cases.
 - One row per distinct outcome/branch + the edge cases above. Codes/messages exact (runtime-verified).
-- **Follow the testRigor writing principles** (see the block above): consistencia, atomicidad
-  (un objetivo por caso), cobertura positiva+negativa, datos definidos, trazabilidad.
+- **Follow the test-case writing principles** (bloque de arriba): consistencia, atomicidad (un
+  objetivo por caso), naming accionable, cobertura positiva+negativa, datos definidos, trazabilidad.
+- **Usa técnicas de diseño para enumerar, no a ojo** — partición de equivalencia (una clase por caso),
+  BVA (bordes: monto 0/mín/máx±1, dataMfetch 250/251, fechas límite) y tabla de decisión para
+  combinaciones (estado tarjeta × cuenta × v1/v2). Deben quedar reflejadas en los casos edge/negativos.
+- **Casos independientes, repetibles y con limpieza** — cada caso corre solo y da el mismo resultado
+  sin importar quién lo ejecute; documenta la reversión de estado (transacción, `X-Identifier-Key`).
+- **La tabla es exportable a hoja QA (Excel/Word)** — al entregarse a QA lleva además las columnas de
+  ejecución **Resultado real** y **Estado (Pass/Fail)**, vacías en diseño y llenadas al correr.
 - **`EST-NN` IDs are MANDATORY and stable** — correlativos, no se renumeran; son la columna puente
   que el Plan de Desarrollo (techdoc) reusa tal cual en su tabla `[3] Pruebas Unitarias`.
 - **Origen Java + Verificación son obligatorios** por caso (trazabilidad al spec y cómo valida QA).
