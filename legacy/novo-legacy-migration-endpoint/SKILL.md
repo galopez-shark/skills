@@ -64,7 +64,8 @@ KEY RULES
   • Parity: error codes/messages/flows must match Java (flag bugs, don't replicate).
   • verify-parity always checks out main first.
   • The route-enabling phase adds the endpoint to the Postman collection.
-  • PR title: `feat: <desc lowercase> (CEB-XXXX)`, ≤72 chars (NKH1). No commit without explicit approval.
+  • PR title: `feat: <desc lowercase>` ≤72 chars (NKH1), NO ticket in title — put `Refs: CEB-XXXX`
+    in the body. No commit without explicit approval.
 ```
 
 After printing, ask what the user wants to do next (list / roadmap / migrate / verify-parity).
@@ -1288,10 +1289,8 @@ mandatory. This repo's migration phases append the phase to the desc (`feature/C
 ### Commits & PR title
 Conventional Commits: `tipo: descripción en minúsculas`. **Valid types (ONLY):**
 `feat` · `fix` · `hotfix` · `docs` · `test` · `refactor` (never `chore`/`perf`).
-- Org SDLC + NKH1 put the ticket in the **body** as `Refs: CEB-XXXX` (NOT in the subject).
-- **This repo's active convention** appends the ticket in the title `tipo: desc (CEB-XXXX)`.
-  Follow the repo convention here unless the user says otherwise; either way keep the subject **≤72**
-  and add `Refs: CEB-XXXX` in the body too.
+- **Ticket goes in the BODY as `Refs: CEB-XXXX`, NEVER in the subject** (org SDLC + NKH1). The
+  title is `tipo: descripción` only. Keep the subject **≤72** chars.
 
 ### PR size (reviewable in < 30 min)
 - `<200` líneas = ✅ ideal · `200–400` = ⚠️ aceptable (justificar) · `>400` = ❌ dividir antes de review.
@@ -1325,10 +1324,11 @@ Lead time `<2d` features / `<4h` hotfix · `≥2` deploys/week · change-failure
 ## PR Template
 
 ```markdown
-**Title:** `feat: {description, lowercase} ({TICKET})`
-(no scope in parentheses after `feat`; description in lowercase — no capitals except the ticket and
-proper nouns/acronyms; append the Jira ticket at the END — e.g. `feat: add getLastCardToken domain + service (CEB-5638)`)
-**Keep the whole title ≤ 72 chars (NKH1 standard).** Put extra detail in the body, not the subject.
+**Title:** `feat: {description, lowercase}`
+(no scope in parentheses after the type; description in lowercase — no capitals except proper
+nouns/acronyms; **NO Jira ticket in the title** — it goes in the body as `Refs:` — e.g.
+`feat: add getLastCardToken domain + service`)
+**Keep the title ≤ 72 chars (NKH1 standard).** Put extra detail (and the ticket) in the body.
 A title over 72 chars (e.g. ~120) is a nit, not a blocker — but trim scope words to fit.
 
 **Body:**
