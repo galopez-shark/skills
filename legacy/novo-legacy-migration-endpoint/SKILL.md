@@ -1017,8 +1017,9 @@ Before writing the first line of code in any phase, validate ALL applicable item
    # Split remaining work into a new phase BEFORE continuing
    ```
    If over 400 lines: **do NOT proceed** with make check or PR. Remove excess code, move it to a TODO for the next phase, and re-check.
-2. Run test command from context (`make check`, etc.) — 0 issues
-3. Verify coverage ≥ 85%
+2. Run test command from context (`make check`, etc.) — 0 issues. Must satisfy the NovoPayment Go
+   quality gates: **staticcheck · go vet · gosec · gocyclo · ineffassign · `go test -cover`**.
+3. Verify coverage — NKH1 **floor 70%** on changed code, **goal 85%**; keep per-package ~85%.
 4. Bump version in versioning file
 5. `grep -rn` for source-language references — 0 matches
 6. `grep -rn "log.Printf\|fmt.Println"` — 0 debug logs
@@ -1271,6 +1272,56 @@ type fooReq struct {
 
 ---
 
+## SDLC — NovoPayment standard (org-wide alignment)
+
+This skill's phase flow implements NovoPayment's **SDLC Developer Quick Reference**. Keep these
+org-wide rules in sync with the per-phase steps above.
+
+### Branching
+`[tipo]/[JIRA-ID]-[desc-kebab]`, **always from `main`**. Types: `feature/` (nueva funcionalidad),
+`fix/` (bug), `hotfix/` (urgente en prod). Lowercase + kebab-case, description 3–5 words, JIRA-ID
+mandatory. This repo's migration phases append the phase to the desc (`feature/CEB-XXXX-service`).
+- ❌ `feature/login` · `gabriel/fix-bug` (no name prefix) · `Feature/PAY-456-Login` (caps) ·
+  `feature/PAY-456` (no desc) · overly long descriptions
+- ✅ `feature/CEB-5634-service`
+
+### Commits & PR title
+Conventional Commits: `tipo: descripción en minúsculas`. **Valid types (ONLY):**
+`feat` · `fix` · `hotfix` · `docs` · `test` · `refactor` (never `chore`/`perf`).
+- Org SDLC + NKH1 put the ticket in the **body** as `Refs: CEB-XXXX` (NOT in the subject).
+- **This repo's active convention** appends the ticket in the title `tipo: desc (CEB-XXXX)`.
+  Follow the repo convention here unless the user says otherwise; either way keep the subject **≤72**
+  and add `Refs: CEB-XXXX` in the body too.
+
+### PR size (reviewable in < 30 min)
+- `<200` líneas = ✅ ideal · `200–400` = ⚠️ aceptable (justificar) · `>400` = ❌ dividir antes de review.
+- Split by: one endpoint/feature per PR; business logic apart from infra/config; refactors in their
+  own PR; tests can land in a prior PR; DB migrations independent. (Matches the ≤400/10-file phase cap.)
+
+### Quality gates (Go) — enforced by `make check`
+staticcheck · go vet · gosec · gocyclo · ineffassign · `go test -cover`. Plus **CodeRabbit** on the
+PR — review & resolve every comment before requesting merge.
+
+### Testing mix & coverage
+**60% unit · 30% integration (APIs/endpoints) · 10% E2E (critical flows).** Coverage **floor 70%**,
+**goal 85%**. Exceptions (no tests required): config files, simple constants/enums, generated code,
+critical hotfixes (with a documented remediation plan in the PR).
+
+### Deployment (immutable build)
+`main → DEV (auto on merge) → UAT (PO approval) → PRD (Prod approval)`. Same artifact promoted across
+environments; config is external and per-environment. Migration endpoints follow this after the
+handler phase merges.
+
+### Hotfix (expedited)
+`hotfix/JIRA-ID-desc` from main → fix mínimo → testing acelerado en DEV → review (puede ser post-merge
+en emergencia) → aprobación de Producción → deploy a PRD → post-mortem. Coverage bypass permitido con
+plan de remediación documentado en el PR.
+
+### DORA targets
+Lead time `<2d` features / `<4h` hotfix · `≥2` deploys/week · change-failure `<5%` · MTTR `<1h`.
+
+---
+
 ## PR Template
 
 ```markdown
@@ -1291,7 +1342,9 @@ A title over 72 chars (e.g. ~120) is a nit, not a blocker — but trim scope wor
 
 ## Test plan
 - [x] N test cases
-- [x] Test command passes — 0 issues, coverage X%
+- [x] Test command passes — 0 issues, coverage X% (floor 70%, goal 85%)
+
+Refs: {TICKET}
 
 Generated with [Claude Code](https://claude.com/claude-code)
 ```
