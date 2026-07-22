@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.0.0"
+  version: "1.1.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -32,17 +32,38 @@ The `<PR_URL>` is the GitHub pull request URL. The skill will:
 3. Run go-bricks validation checks
 4. Report combined findings
 
-## How to get the diff
+## How to get the diff (MANDATORY — never guess the branch)
 
+The PR URL is the source of truth. You MUST resolve the actual PR branch before
+reviewing — never assume which branch a PR number corresponds to.
+
+**Step 1 — Resolve the PR ref locally** (works even without `gh` auth):
 ```bash
-# Extract org/repo and PR number from the URL
-# e.g. https://github.com/novopayment/multitenant-banking-api-be-go/pull/27
-gh pr diff <PR_NUMBER> --repo <ORG/REPO>
-# Fallback if gh auth fails:
-git diff origin/main...origin/<branch-name>
+# Always works on any repo you can fetch from:
+git fetch origin refs/pull/<PR_NUMBER>/head:pr-<PR_NUMBER>
+# Now pr-<PR_NUMBER> is a local ref pointing to the exact PR HEAD
 ```
 
-If `gh` auth fails, identify the PR branch from `gh pr view` or the URL, then use `git diff` locally.
+**Step 2 — Get the diff against the base branch**:
+```bash
+git diff origin/main...pr-<PR_NUMBER> --stat
+git diff origin/main...pr-<PR_NUMBER>
+```
+
+**Step 3 — Read full files from the PR branch** (for context):
+```bash
+git show pr-<PR_NUMBER>:<file_path>
+```
+
+**Alternative** (only if `gh` auth works):
+```bash
+gh pr view <PR_NUMBER> --json title,headRefName,additions,deletions,changedFiles
+gh pr diff <PR_NUMBER>
+```
+
+**RULE**: Never use `git branch -r` to guess which branch a PR belongs to. Always
+use `git fetch origin refs/pull/<N>/head` or `gh pr view` to resolve the exact ref.
+A wrong branch means a wrong review — this is a hard rule, not a suggestion.
 
 ---
 
