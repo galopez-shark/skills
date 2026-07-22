@@ -199,7 +199,47 @@ Flag if:
 - A new DTO duplicates fields from an existing shared type
 - A helper function reimplements something in `internal/plataform/`
 
-### 9. Config completeness (NIT)
+### 9. Go naming & conventions (SHOULD-FIX)
+
+Check all new identifiers against Go and project conventions:
+
+**Variables & fields:**
+- [ ] camelCase for unexported, PascalCase for exported — no snake_case
+- [ ] Avoid stuttering: `domain.DomainError` → `domain.Error`; `cards.CardsService` → `cards.Service`
+- [ ] Acronyms fully capitalized: `ID` not `Id`, `HTTP` not `Http`, `URL` not `Url`, `SQL` not `Sql`
+- [ ] Boolean vars/fields start with `is`, `has`, `can`, `should` — or are adjectives: `valid`, `active`, `blocked`
+- [ ] Receiver names: 1-2 letter abbreviation of the type (`s` for Service, `r` for Repository, `h` for Handler) — consistent within the file
+
+**Functions & methods:**
+- [ ] Exported functions start with a verb: `Get`, `Create`, `Validate`, `Parse`, `Build`
+- [ ] Constructors follow `New{Type}` pattern: `NewService`, `NewRepository`, `NewHandler`
+- [ ] Interface methods describe the action: `FindByID`, `Store`, `Delete` — not `DoFind`, `ProcessStore`
+- [ ] Error-returning functions: last return is `error`, not mixed in the middle
+- [ ] Context is always the first parameter: `func (s *Service) GetCard(ctx context.Context, ...)`
+
+**Types & interfaces:**
+- [ ] Interfaces named by behavior (suffix `-er`): `Reader`, `Writer`, `Validator` — or by role: `Repository`, `Service`
+- [ ] Single-method interfaces preferred over large ones
+- [ ] Structs named as nouns: `Card`, `Account`, `BlockRequest` — not `CardData`, `AccountInfo`
+- [ ] Error sentinel vars: `Err` prefix → `ErrNotFound`, `ErrInvalidBlockType`
+- [ ] Constants: PascalCase for exported, camelCase for unexported — no `ALL_CAPS` (that's Java/Python)
+
+**Package names:**
+- [ ] Short, lowercase, single-word: `domain`, `service`, `handlers` — not `cardService`, `card_handlers`
+- [ ] No underscores, no mixedCaps
+- [ ] Import alias only when two packages collide
+
+**Files:**
+- [ ] snake_case for file names: `block_request.go`, `card_service.go` — not `blockRequest.go`
+- [ ] `_test.go` suffix for test files in the same package
+- [ ] One primary type per file preferred (small types can share a file like `dto.go`, `errors.go`)
+
+Flag naming violations with a concrete suggestion:
+
+> `[go-bricks]` **Naming**: `cards.CardsService` stutters — rename to `cards.Service`
+> `[go-bricks]` **Naming**: Field `BlockTypeId` should be `BlockTypeID` (Go acronym convention)
+
+### 10. Config completeness (NIT)
 
 If the PR adds config consumption (`config:` tags or `deps.Config`):
 
@@ -209,39 +249,77 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 
 ---
 
-## Reporting
+## Reporting — Markdown output
 
-Combine NKH1 and go-bricks findings in a single report, grouped by severity:
+The final report MUST be formatted as **inline markdown** delivered directly to the user
+(never create a file). Structure it as follows:
 
-1. **Blocker** — NKH1 blockers + go-bricks checks #1 (reinvented types) and #2 (layer boundaries)
-2. **Should-fix** — NKH1 should-fix + go-bricks checks #3-#8
-3. **Nit** — NKH1 nits + go-bricks check #9
+```markdown
+# PR Review: #{number} — {title}
 
-For each finding:
-- Cite `file:line`
-- State what's wrong
-- Give a concrete fix (code snippet or command)
-- Tag it as `[NKH1]` or `[go-bricks]` so the developer knows which standard applies
+**Repo**: {org/repo}
+**Branch**: {branch} → main
+**Files**: {count} | **Lines**: +{added} / -{removed}
 
-End with a **go-bricks gate summary**:
+---
 
-```
-┌──────────────────────────────────────────────────┐
-│          go-bricks VALIDATION — PR #{N}          │
-├──────────────────────────────────────────────────┤
-│ CHECK                    │ STATUS │ NOTES        │
-│──────────────────────────│────────│──────────────│
-│ No reinvented types      │ ✅/❌  │              │
-│ Layer boundaries clean   │ ✅/❌  │              │
-│ Module wiring correct    │ ✅/N/A │              │
-│ DB patterns followed     │ ✅/N/A │              │
-│ Handler patterns correct │ ✅/N/A │              │
-│ External calls via hc    │ ✅/N/A │              │
-│ Test patterns correct    │ ✅/N/A │              │
-│ No duplicate code        │ ✅/❌  │              │
-│ Config complete          │ ✅/N/A │              │
-└──────────────────────────────────────────────────┘
+## Blockers
+
+### 1. [NKH1] {short title}
+**File**: `path/to/file.go:42`
+**Issue**: {what's wrong}
+**Fix**:
+\`\`\`go
+// suggested fix
+\`\`\`
+
+### 2. [go-bricks] {short title}
+...
+
+---
+
+## Should-fix
+
+### 1. [go-bricks] {short title}
+...
+
+---
+
+## Naming & conventions
+
+| # | File | Current | Suggested | Rule |
+|---|------|---------|-----------|------|
+| 1 | `domain/dto.go:5` | `BlockTypeId` | `BlockTypeID` | Acronym convention |
+| 2 | `service/cards.go:1` | `CardsService` | `Service` | No stuttering |
+
+---
+
+## Nits
+
+- `file.go:10` — {nit description}
+
+---
+
+## go-bricks gate summary
+
+| Check | Status | Notes |
+|-------|--------|-------|
+| No reinvented types | ✅/❌ | |
+| Layer boundaries clean | ✅/❌ | |
+| Module wiring correct | ✅/N/A | |
+| DB patterns followed | ✅/N/A | |
+| Handler patterns correct | ✅/N/A | |
+| External calls via httpclient | ✅/N/A | |
+| Test patterns correct | ✅/N/A | |
+| No duplicate code | ✅/❌ | |
+| Naming & conventions | ✅/❌ | |
+| Config complete | ✅/N/A | |
+
+**Verdict**: ✅ Approve / ❌ {N} blockers remain
 ```
 
 Mark checks as N/A when the PR doesn't touch that layer (e.g., domain-only
 PR → DB patterns, handler patterns, external calls are all N/A).
+
+The **Naming & conventions** table is always present — even if all names are
+correct, show the table with a "All naming conventions followed ✅" row.
