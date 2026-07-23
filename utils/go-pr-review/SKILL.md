@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.1.0"
+  version: "1.2.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -21,16 +21,26 @@ Run BOTH — NKH1 first, then go-bricks checks.
 ## Usage
 
 ```
-/go-pr-review <PR_URL>
+/go-pr-review <PR_URL> [LANG]
 ```
 
-Example: `/go-pr-review https://github.com/novopayment/multitenant-banking-api-be-go/pull/27`
+- `LANG` is an optional ISO language code: `EN`, `ES`, `PT`, etc.
+- **Default language is Spanish (`ES`)** — if no `LANG` is provided, the entire
+  report (headings, descriptions, fix suggestions, verdict) MUST be written in Spanish.
+- When `LANG=EN` is passed, write the report in English.
+- Section titles in the markdown template (## Bloqueadores, ## Debe corregirse, etc.)
+  and the go-bricks gate table header labels MUST also be translated to the target language.
+- Code snippets, Go identifiers, and file paths are always in English (they are code).
+
+Examples:
+- `/go-pr-review https://github.com/novopayment/multitenant-banking-api-be-go/pull/27` → report in **Spanish**
+- `/go-pr-review https://github.com/novopayment/multitenant-banking-api-be-go/pull/27 EN` → report in **English**
 
 The `<PR_URL>` is the GitHub pull request URL. The skill will:
 1. Fetch the PR diff
 2. Run NKH1 standard review
 3. Run go-bricks validation checks
-4. Report combined findings
+4. Report combined findings in the requested language
 
 ## How to get the diff (MANDATORY — never guess the branch)
 
@@ -273,7 +283,83 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 ## Reporting — Markdown output
 
 The final report MUST be formatted as **inline markdown** delivered directly to the user
-(never create a file). Structure it as follows:
+(never create a file). The report language depends on the `LANG` parameter:
+
+- **No `LANG` or `ES`** → Spanish (default)
+- **`EN`** → English
+- Other codes → use that language
+
+All prose (headings, descriptions, issue explanations, fix suggestions, verdict)
+MUST be in the target language. Code snippets, Go identifiers, file paths, and
+go-bricks type names stay in English (they are code).
+
+### Template — Spanish (default)
+
+```markdown
+# Revisión PR: #{number} — {title}
+
+**Repo**: {org/repo}
+**Rama**: {branch} → main
+**Archivos**: {count} | **Líneas**: +{added} / -{removed}
+
+---
+
+## Bloqueadores
+
+### 1. [NKH1] {título corto}
+**Archivo**: `path/to/file.go:42`
+**Problema**: {qué está mal}
+**Corrección**:
+\`\`\`go
+// corrección sugerida
+\`\`\`
+
+### 2. [go-bricks] {título corto}
+...
+
+---
+
+## Debe corregirse
+
+### 1. [go-bricks] {título corto}
+...
+
+---
+
+## Nombres y convenciones
+
+| # | Archivo | Actual | Sugerido | Regla |
+|---|---------|--------|----------|-------|
+| 1 | `domain/dto.go:5` | `BlockTypeId` | `BlockTypeID` | Convención de acrónimos |
+| 2 | `service/cards.go:1` | `CardsService` | `Service` | Sin tartamudeo |
+
+---
+
+## Observaciones menores
+
+- `file.go:10` — {descripción}
+
+---
+
+## Resumen de validación go-bricks
+
+| Verificación | Estado | Notas |
+|-------------|--------|-------|
+| Sin tipos reinventados | ✅/❌ | |
+| Límites de capa correctos | ✅/❌ | |
+| Cableado de módulo correcto | ✅/N/A | |
+| Patrones de BD seguidos | ✅/N/A | |
+| Patrones de handler correctos | ✅/N/A | |
+| Llamadas externas vía httpclient | ✅/N/A | |
+| Patrones de test correctos | ✅/N/A | |
+| Sin código duplicado | ✅/❌ | |
+| Nombres y convenciones | ✅/❌ | |
+| Config completa | ✅/N/A | |
+
+**Veredicto**: ✅ Aprobado / ❌ {N} bloqueadores pendientes
+```
+
+### Template — English (when `LANG=EN`)
 
 ```markdown
 # PR Review: #{number} — {title}
@@ -343,4 +429,5 @@ Mark checks as N/A when the PR doesn't touch that layer (e.g., domain-only
 PR → DB patterns, handler patterns, external calls are all N/A).
 
 The **Naming & conventions** table is always present — even if all names are
-correct, show the table with a "All naming conventions followed ✅" row.
+correct, show the table with a "Todas las convenciones seguidas ✅" (ES) /
+"All naming conventions followed ✅" (EN) row.
