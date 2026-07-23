@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.4.0"
+  version: "1.5.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -47,10 +47,14 @@ The `<PR_URL>` is the GitHub pull request URL. The skill will:
 The PR URL is the source of truth. You MUST resolve the actual PR branch before
 reviewing — never assume which branch a PR number corresponds to.
 
+**CRITICAL: ALWAYS re-fetch the PR ref** — even if `pr-<N>` already exists locally.
+The author may have pushed new commits since the last fetch. A stale ref means
+reviewing old code and missing fixes. Use `--force` to overwrite the local ref.
+
 **Step 1 — Resolve the PR ref locally** (works even without `gh` auth):
 ```bash
-# Always works on any repo you can fetch from:
-git fetch origin refs/pull/<PR_NUMBER>/head:pr-<PR_NUMBER>
+# ALWAYS force-fetch to get the latest commits — never skip this step
+git fetch origin refs/pull/<PR_NUMBER>/head:pr-<PR_NUMBER> --force
 # Now pr-<PR_NUMBER> is a local ref pointing to the exact PR HEAD
 ```
 
@@ -128,6 +132,18 @@ After all checks, verify scope containment and evidence quality.
 
 These checks target correctness bugs and code smells that linters often miss.
 Every finding MUST cite file:line and a concrete failure scenario.
+
+**Developer-explicit findings**: When reporting bugs and should-fix items, write
+them as a developer would explain to another developer in a PR comment. Include:
+- The exact code that's wrong (quote the line)
+- What happens at runtime (e.g., "this panics with nil pointer dereference when...")
+- The fix as a concrete code diff (before → after)
+- Why the fix is correct (e.g., "because `%w` preserves the error chain for `errors.Is()`")
+
+Bad: "Error handling could be improved"
+Good: "`sql_repository.go:45` — `fmt.Errorf("failed: %s", err)` loses the error
+chain. Callers using `errors.Is(err, ErrNotFound)` will get `false` because `%s`
+stringifies instead of wrapping. Fix: `fmt.Errorf("failed: %w", err)`"
 
 ### 11. Error handling bugs (BLOCKER)
 
@@ -292,6 +308,119 @@ When the diff touches repository code:
 - [ ] `mocks.MockDatabase` / `mocks.MockTx` for DB mocks in tests
 - [ ] No `sql.NullString` in domain types — convert at the repository boundary
 - [ ] Mapper functions in `mapper.go`, not scattered in repository methods
+
+### 4b. Entity/Row mapping pattern (SHOULD-FIX — repository phase)
+
+The project follows the **zinli-business-be-go** entity mapping convention.
+When the diff adds DB read/write structs, verify it follows this pattern:
+
+#### Three struct types at different layers
+
+| Struct | Package | Purpose | `sql.Null*`? | Tags |
+|--------|---------|---------|-------------|------|
+| **Row struct** (`{Name}Row`) | `repository/` | Flat representation of a SELECT result. One field per column. | YES — for nullable cols | None (no tags) |
+| **Entity struct** (`{Name}Entity`) | `domain/` | Represents a table row for INSERTs/UPDATEs. Plain types. | NO | None (no tags) |
+| **DTO struct** | `domain/` | Clean business object for service/handler layers. | NO | `json:"..."` on API-facing |
+
+#### `ScanColumns()` helper (MANDATORY for multi-column queries)
+
+Every Row struct with more than 3-4 columns MUST have a `ScanColumns()` function
+in `repository/mapper.go` that returns `[]any` of pointers:
+
+```go
+// mapper.go
+type CardRow struct {
+    CardID     string         // NOT NULL → plain type
+    BlockType  sql.NullString // nullable → sql.Null*
+    CreatedAt  sql.NullTime
+}
+
+func ScanColumns(row *CardRow) []any {
+    return []any{
+        &row.CardID,
+        &row.BlockType,
+        &row.CreatedAt,
+    }
+}
+```
+
+Usage in repository:
+```go
+var row CardRow
+if err = rows.Scan(ScanColumns(&row)...); err != nil { ... }
+```
+
+**Why**: `ScanColumns()` keeps the scan-order contract in ONE place. When a query
+adds a column, you update `ScanColumns()` and the compiler catches mismatches.
+Inline `rows.Scan(&a, &b, &c, ...)` with 20+ args is error-prone and hard to diff.
+
+#### Mapper functions (MANDATORY)
+
+Mappers live in `repository/mapper.go` and convert Row → DTO:
+
+```go
+// mapper.go
+func (m *CardMapper) ToCardDTO(row *CardRow) *domain.CardDTO {
+    return &domain.CardDTO{
+        ID:        row.CardID,
+        BlockType: row.BlockType.String, // unwrap sql.Null* here
+    }
+}
+```
+
+**Rules**:
+- `sql.Null*` unwrapping happens ONLY in the mapper, never in domain or service
+- Check `.Valid` when NULL vs empty has business meaning (e.g., nil card = no card)
+- Mapper file also holds `ClassifyX()` helpers if the query JOINs multi-type rows
+
+#### Column metadata for QueryBuilder (RECOMMENDED for write-heavy modules)
+
+For modules that build dynamic queries with `qb.Update()` / `qb.Insert()`:
+
+```go
+// domain/entity.go or repository/columns.go
+type CardEntityColumns struct {
+    CardID    string
+    BlockType string
+    Status    string
+}
+
+var CardEntity = plataform.Entity[CardEntityColumns]{
+    Name: "CARD",
+    Columns: CardEntityColumns{
+        CardID:    "CARD_ID",
+        BlockType: "BLOCK_TYPE_ID",
+        Status:    "CARD_STATUS_ID",
+    },
+}
+```
+
+Usage with QueryBuilder:
+```go
+sql, args, _ := qb.Update(domain.CardEntity.Name).
+    Set(domain.CardEntity.Columns.Status, statusID).
+    Where(qb.Filter().Eq(domain.CardEntity.Columns.CardID, cardID)).
+    ToSQL()
+```
+
+#### What to flag
+
+```bash
+# sql.Null* in domain (should only be in repository Row structs)
+grep -rn "sql\.Null" <module>/domain/ --include="*.go"
+
+# Inline scan with 5+ fields and no ScanColumns helper
+# Manual: look for rows.Scan(&a, &b, &c, &d, &e, ...) in repository without a ScanColumns()
+
+# Missing mapper.go when repository has Row struct
+ls <module>/repository/mapper.go 2>/dev/null || echo "MISSING"
+```
+
+Flag:
+- **`sql.Null*` in domain**: `domain/dto.go` has `sql.NullString` → move to `repository/` Row struct, unwrap in mapper
+- **No `ScanColumns()`**: repository scans 10+ columns inline → extract to `ScanColumns()` in `mapper.go`
+- **No mapper file**: Row → DTO conversion is inline in `sql_repository.go` → extract to `mapper.go`
+- **Scan order mismatch**: `ScanColumns()` field order doesn't match the SELECT column order in `queries.go`
 
 ### 5. HTTP/handler patterns (SHOULD-FIX — handler phase)
 
@@ -482,8 +611,9 @@ grep 'go-bricks' go.mod
 GOPROXY=https://proxy.golang.org go list -m -versions github.com/gaborage/go-bricks 2>/dev/null | awk '{print $NF}'
 ```
 
-If the project is behind, note it as a **NIT** — unless the latest version has
-a fix relevant to the PR's code, in which case elevate to **SHOULD-FIX**.
+If the project is behind, note it as a **improvement comment** (not a blocker,
+not a should-fix). Include it in the "Comentarios de mejora" section of the report
+as context for a future upgrade — never block the PR for a version bump alone.
 
 ---
 
@@ -620,6 +750,15 @@ go-bricks type names stay in English (they are code).
 
 ---
 
+## Comentarios de mejora
+
+Items que no bloquean el merge pero conviene tener en cuenta para futuros commits:
+
+- go-bricks version: v{current} → v{latest} disponible (mejora, no bloqueante)
+- {other forward-looking suggestions}
+
+---
+
 ## Resumen de validación
 
 | Verificación | Estado | Notas |
@@ -629,6 +768,7 @@ go-bricks type names stay in English (they are code).
 | Límites de capa correctos | ✅/❌/⚠️ | |
 | Cableado de módulo correcto | ✅/N/A | |
 | Patrones de BD seguidos | ✅/N/A | |
+| Entity/Row mapping correcto | ✅/N/A | Row struct + ScanColumns + mapper |
 | Patrones de handler correctos | ✅/N/A | |
 | Llamadas externas vía httpclient | ✅/N/A | |
 | Patrones de test correctos | ✅/N/A | |
@@ -648,7 +788,27 @@ go-bricks type names stay in English (they are code).
 | Scope contenido (1 módulo/tema) | ✅/❌ | |
 
 **Veredicto**: ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
+
+---
+
+## Feedback para el PR (copiar/pegar)
+
+> **Debe corregir antes de merge:**
+> 1. {finding 1 — one-liner con file:line}
+> 2. {finding 2}
+>
+> **Tener en cuenta para próximo commit:**
+> 1. {improvement 1}
+> 2. {improvement 2}
+>
+> **Oportunidades go-bricks:**
+> 1. {opportunity 1}
 ```
+
+The "Feedback para el PR" section is a copy-pasteable block the reviewer can
+drop directly into the GitHub PR comment. Keep it concise — one line per item,
+no code blocks, just file:line + what to do. The full analysis stays in the
+sections above for context.
 
 ### Template — English (when `LANG=EN`)
 
@@ -721,6 +881,15 @@ go-bricks type names stay in English (they are code).
 
 ---
 
+## Improvement comments
+
+Items that don't block the merge but are worth noting for future commits:
+
+- go-bricks version: v{current} → v{latest} available (improvement, not blocking)
+- {other forward-looking suggestions}
+
+---
+
 ## Validation summary
 
 | Check | Status | Notes |
@@ -730,6 +899,7 @@ go-bricks type names stay in English (they are code).
 | Layer boundaries clean | ✅/❌/⚠️ | |
 | Module wiring correct | ✅/N/A | |
 | DB patterns followed | ✅/N/A | |
+| Entity/Row mapping correct | ✅/N/A | Row struct + ScanColumns + mapper |
 | Handler patterns correct | ✅/N/A | |
 | External calls via httpclient | ✅/N/A | |
 | Test patterns correct | ✅/N/A | |
@@ -749,7 +919,27 @@ go-bricks type names stay in English (they are code).
 | Scope contained (1 module/topic) | ✅/❌ | |
 
 **Verdict**: ✅ Approve / ⚠️ Not verified ({reason}) / ❌ {N} blockers remain
+
+---
+
+## PR Feedback (copy/paste)
+
+> **Must fix before merge:**
+> 1. {finding 1 — one-liner with file:line}
+> 2. {finding 2}
+>
+> **Keep in mind for next commit:**
+> 1. {improvement 1}
+> 2. {improvement 2}
+>
+> **go-bricks opportunities:**
+> 1. {opportunity 1}
 ```
+
+The "PR Feedback" section is a copy-pasteable block the reviewer can drop
+directly into the GitHub PR comment. Keep it concise — one line per item,
+no code blocks, just file:line + what to do. The full analysis stays in the
+sections above for context.
 
 Mark checks as N/A when the PR doesn't touch that layer (e.g., domain-only
 PR → DB patterns, handler patterns, external calls are all N/A).
