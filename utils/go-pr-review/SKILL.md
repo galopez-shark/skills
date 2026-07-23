@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.5.2"
+  version: "1.6.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -743,266 +743,187 @@ go-bricks type names stay in English (they are code).
 
 ### Template — Spanish (default)
 
+The entire output is ONE markdown block the user can copy-paste into a GitHub
+PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
+- Use `##` for top sections, `###` for sub-findings
+- Use `<details><summary>` to collapse verbose sections (validation table, nits)
+- Use task lists (`- [ ]` / `- [x]`) for actionable items
+- Use fenced code blocks with language hint (\`\`\`go, \`\`\`bash)
+- Tables must have a header separator row (`|---|---|`)
+- No raw HTML except `<details>`, `<summary>`, `<br>`
+- Emoji are OK for status: ✅ ❌ ⚠️ 🔧 💡
+
 ```markdown
-# Revisión PR: #{number} — {title}
+## Revisión PR #{number} — {title}
 
-**Repo**: {org/repo}
-**Rama**: {branch} → main
-**Archivos**: {count} | **Líneas**: +{added} / -{removed}
-**Riesgo**: ALTO / MEDIO / BAJO
-**Scope**: {módulos tocados} | {capas tocadas}
+📋 **{count} archivos** | **+{added} / -{removed} líneas** | **Riesgo**: {ALTO/MEDIO/BAJO} | **go-bricks**: v{version}
 
----
+### ❌ Bloqueadores
 
-## Bloqueadores
+> Ninguno / o lista:
 
-### 1. [NKH1] {título corto}
-**Archivo**: `path/to/file.go:42`
-**Problema**: {qué está mal}
-**Evidencia**: {comando o snippet que lo prueba}
-**Escenario de fallo**: {inputs concretos → resultado incorrecto}
-**Corrección**:
-\`\`\`go
-// corrección sugerida
-\`\`\`
-
-### 2. [go-bricks] {título corto}
-...
-
-### 3. [bug] {título corto}
-...
+**1. `[tag]` {título corto}**
+📁 `path/to/file.go:42`
+```go
+// código problemático (copiado del diff)
+```
+**Problema**: {explicación en lenguaje developer — qué pasa en runtime}
+**Fix**:
+```go
+// código corregido
+```
 
 ---
 
-## Debe corregirse
+### 🔧 Debe corregirse
 
-### 1. [go-bricks] {título corto}
-...
-
-### 2. [calidad-test] {título corto}
-...
-
-### 3. [scope] {título corto}
-...
+- [ ] **`path/to/file.go:42`** — `[tag]` {descripción developer-friendly: qué está mal, qué pasa en runtime, cómo corregir}
+- [ ] **`path/to/file.go:80`** — `[tag]` {descripción}
 
 ---
 
-## Oportunidades go-bricks
+### 💡 Oportunidades go-bricks
 
-### 1. [go-bricks-oportunidad] {título corto}
-**Archivo**: `path/to/file.go:45`
-**Actualmente**: {lo que el PR implementa manualmente}
-**go-bricks ofrece**: {función/tipo que lo reemplaza}
-**Beneficio**: {por qué es mejor usar go-bricks}
+- [ ] **`path/to/file.go:45`** — `[go-bricks]` {lo que el PR hace manualmente} → usar `{go-bricks type/function}` ({beneficio concreto})
 
 ---
 
-## Nombres y convenciones
+### 📌 Para el próximo commit
 
-| # | Archivo | Actual | Sugerido | Regla |
-|---|---------|--------|----------|-------|
-| 1 | `domain/dto.go:5` | `BlockTypeId` | `BlockTypeID` | Convención de acrónimos |
-| 2 | `service/cards.go:1` | `CardsService` | `Service` | Sin tartamudeo |
+- {item 1 — forward-looking, no bloquea este PR}
+- {item 2}
+- go-bricks v{current} → v{latest} disponible
 
----
-
-## Observaciones menores
-
-- `file.go:10` — {descripción}
-
----
-
-## Comentarios de mejora
-
-Items que no bloquean el merge pero conviene tener en cuenta para futuros commits:
-
-- go-bricks version: v{current} → v{latest} disponible (mejora, no bloqueante)
-- {other forward-looking suggestions}
-
----
-
-## Resumen de validación
+<details>
+<summary>📊 Resumen de validación (click para expandir)</summary>
 
 | Verificación | Estado | Notas |
-|-------------|--------|-------|
+|:--|:--:|:--|
 | **go-bricks** | | |
 | Sin tipos reinventados | ✅/❌/⚠️ | |
 | Límites de capa correctos | ✅/❌/⚠️ | |
-| Cableado de módulo correcto | ✅/N/A | |
-| Patrones de BD seguidos | ✅/N/A | |
-| Entity/Row mapping correcto | ✅/N/A | Row struct + ScanColumns + mapper |
-| Ubicación de archivos/structs | ✅/N/A | DTOs en domain, Row en repository |
-| Patrones de handler correctos | ✅/N/A | |
-| Llamadas externas vía httpclient | ✅/N/A | |
-| Patrones de test correctos | ✅/N/A | |
+| Cableado de módulo | ✅/N/A | |
+| Patrones de BD | ✅/N/A | |
+| Entity/Row mapping | ✅/N/A | |
+| Ubicación archivos/structs | ✅/N/A | |
+| Patrones handler | ✅/N/A | |
+| Llamadas externas httpclient | ✅/N/A | |
+| Patrones de test | ✅/N/A | |
 | Sin código duplicado | ✅/❌ | |
 | Nombres y convenciones | ✅/❌ | |
 | Config completa | ✅/N/A | |
 | **Bugs & code smells** | | |
 | Manejo de errores | ✅/❌/⚠️ | |
-| Sin bugs de concurrencia | ✅/❌/N/A | |
+| Sin bugs de concurrencia | ✅/N/A | |
 | Sin resource leaks | ✅/❌/⚠️ | |
-| Fail-closed en fallos | ✅/❌/N/A | |
+| Fail-closed en fallos | ✅/N/A | |
 | Calidad de tests | ✅/❌/⚠️ | |
 | **go-bricks discovery** | | |
-| Versión go-bricks actualizada | ✅/❌ | |
-| Sin oportunidades go-bricks perdidas | ✅/❌ | {N} oportunidades encontradas |
-| **Scope & evidencia** | | |
-| Scope contenido (1 módulo/tema) | ✅/❌ | |
+| Versión go-bricks | ⚠️/✅ | |
+| Oportunidades go-bricks | ✅/❌ | {N} encontradas |
+| **Scope** | | |
+| Scope contenido | ✅/❌ | |
+
+</details>
+
+<details>
+<summary>📝 Nombres y convenciones</summary>
+
+| # | Archivo | Actual | Sugerido | Regla |
+|---|---------|--------|----------|-------|
+| — | — | Todas las convenciones seguidas ✅ | — | — |
+
+</details>
 
 **Veredicto**: ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
-
----
-
-## Feedback para el PR (copiar/pegar)
-
-> **Debe corregir antes de merge:**
-> 1. {finding 1 — one-liner con file:line}
-> 2. {finding 2}
->
-> **Tener en cuenta para próximo commit:**
-> 1. {improvement 1}
-> 2. {improvement 2}
->
-> **Oportunidades go-bricks:**
-> 1. {opportunity 1}
 ```
-
-The "Feedback para el PR" section is a copy-pasteable block the reviewer can
-drop directly into the GitHub PR comment. Keep it concise — one line per item,
-no code blocks, just file:line + what to do. The full analysis stays in the
-sections above for context.
 
 ### Template — English (when `LANG=EN`)
 
 ```markdown
-# PR Review: #{number} — {title}
+## PR Review #{number} — {title}
 
-**Repo**: {org/repo}
-**Branch**: {branch} → main
-**Files**: {count} | **Lines**: +{added} / -{removed}
-**Risk**: HIGH / MEDIUM / LOW
-**Scope**: {modules touched} | {layers touched}
+📋 **{count} files** | **+{added} / -{removed} lines** | **Risk**: {HIGH/MEDIUM/LOW} | **go-bricks**: v{version}
 
----
+### ❌ Blockers
 
-## Blockers
+> None / or list:
 
-### 1. [NKH1] {short title}
-**File**: `path/to/file.go:42`
-**Issue**: {what's wrong}
-**Evidence**: {command or snippet that proves it}
-**Failure scenario**: {concrete inputs → wrong output/crash}
+**1. `[tag]` {short title}**
+📁 `path/to/file.go:42`
+```go
+// problematic code (copied from diff)
+```
+**Issue**: {developer-language explanation — what happens at runtime}
 **Fix**:
-\`\`\`go
-// suggested fix
-\`\`\`
-
-### 2. [go-bricks] {short title}
-...
-
-### 3. [bug] {short title}
-...
+```go
+// corrected code
+```
 
 ---
 
-## Should-fix
+### 🔧 Should fix
 
-### 1. [go-bricks] {short title}
-...
-
-### 2. [test-quality] {short title}
-...
-
-### 3. [scope] {short title}
-...
+- [ ] **`path/to/file.go:42`** — `[tag]` {developer-friendly description: what's wrong, runtime impact, how to fix}
+- [ ] **`path/to/file.go:80`** — `[tag]` {description}
 
 ---
 
-## go-bricks opportunities
+### 💡 go-bricks opportunities
 
-### 1. [go-bricks-opportunity] {short title}
-**File**: `path/to/file.go:45`
-**Currently**: {what the PR implements manually}
-**go-bricks offers**: {function/type that replaces it}
-**Benefit**: {why go-bricks is better}
+- [ ] **`path/to/file.go:45`** — `[go-bricks]` {what the PR does manually} → use `{go-bricks type/function}` ({concrete benefit})
 
 ---
 
-## Naming & conventions
+### 📌 For the next commit
 
-| # | File | Current | Suggested | Rule |
-|---|------|---------|-----------|------|
-| 1 | `domain/dto.go:5` | `BlockTypeId` | `BlockTypeID` | Acronym convention |
-| 2 | `service/cards.go:1` | `CardsService` | `Service` | No stuttering |
+- {item 1 — forward-looking, doesn't block this PR}
+- {item 2}
+- go-bricks v{current} → v{latest} available
 
----
-
-## Nits
-
-- `file.go:10` — {nit description}
-
----
-
-## Improvement comments
-
-Items that don't block the merge but are worth noting for future commits:
-
-- go-bricks version: v{current} → v{latest} available (improvement, not blocking)
-- {other forward-looking suggestions}
-
----
-
-## Validation summary
+<details>
+<summary>📊 Validation summary (click to expand)</summary>
 
 | Check | Status | Notes |
-|-------|--------|-------|
+|:--|:--:|:--|
 | **go-bricks** | | |
 | No reinvented types | ✅/❌/⚠️ | |
-| Layer boundaries clean | ✅/❌/⚠️ | |
-| Module wiring correct | ✅/N/A | |
-| DB patterns followed | ✅/N/A | |
-| Entity/Row mapping correct | ✅/N/A | Row struct + ScanColumns + mapper |
-| Handler patterns correct | ✅/N/A | |
-| External calls via httpclient | ✅/N/A | |
-| Test patterns correct | ✅/N/A | |
+| Layer boundaries | ✅/❌/⚠️ | |
+| Module wiring | ✅/N/A | |
+| DB patterns | ✅/N/A | |
+| Entity/Row mapping | ✅/N/A | |
+| File/struct placement | ✅/N/A | |
+| Handler patterns | ✅/N/A | |
+| External calls httpclient | ✅/N/A | |
+| Test patterns | ✅/N/A | |
 | No duplicate code | ✅/❌ | |
 | Naming & conventions | ✅/❌ | |
 | Config complete | ✅/N/A | |
 | **Bugs & code smells** | | |
 | Error handling | ✅/❌/⚠️ | |
-| No concurrency bugs | ✅/❌/N/A | |
+| No concurrency bugs | ✅/N/A | |
 | No resource leaks | ✅/❌/⚠️ | |
-| Fail-closed on errors | ✅/❌/N/A | |
+| Fail-closed on errors | ✅/N/A | |
 | Test quality | ✅/❌/⚠️ | |
 | **go-bricks discovery** | | |
-| go-bricks version up to date | ✅/❌ | |
-| No missed go-bricks opportunities | ✅/❌ | {N} opportunities found |
-| **Scope & evidence** | | |
-| Scope contained (1 module/topic) | ✅/❌ | |
+| go-bricks version | ⚠️/✅ | |
+| go-bricks opportunities | ✅/❌ | {N} found |
+| **Scope** | | |
+| Scope contained | ✅/❌ | |
+
+</details>
+
+<details>
+<summary>📝 Naming & conventions</summary>
+
+| # | File | Current | Suggested | Rule |
+|---|------|---------|-----------|------|
+| — | — | All conventions followed ✅ | — | — |
+
+</details>
 
 **Verdict**: ✅ Approve / ⚠️ Not verified ({reason}) / ❌ {N} blockers remain
-
----
-
-## PR Feedback (copy/paste)
-
-> **Must fix before merge:**
-> 1. {finding 1 — one-liner with file:line}
-> 2. {finding 2}
->
-> **Keep in mind for next commit:**
-> 1. {improvement 1}
-> 2. {improvement 2}
->
-> **go-bricks opportunities:**
-> 1. {opportunity 1}
 ```
-
-The "PR Feedback" section is a copy-pasteable block the reviewer can drop
-directly into the GitHub PR comment. Keep it concise — one line per item,
-no code blocks, just file:line + what to do. The full analysis stays in the
-sections above for context.
 
 Mark checks as N/A when the PR doesn't touch that layer (e.g., domain-only
 PR → DB patterns, handler patterns, external calls are all N/A).
