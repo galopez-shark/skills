@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.5.1"
+  version: "1.5.2"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -373,16 +373,33 @@ func (m *CardMapper) ToCardDTO(row *CardRow) *domain.CardDTO {
 - Check `.Valid` when NULL vs empty has business meaning (e.g., nil card = no card)
 - Mapper file also holds `ClassifyX()` helpers if the query JOINs multi-type rows
 
-#### Column metadata for QueryBuilder (RECOMMENDED for write-heavy modules)
+#### Column metadata via `plataform.Entity[T]` (SHOULD-FIX when Entity[T] exists)
 
-For modules that build dynamic queries with `qb.Update()` / `qb.Insert()`:
+**Before writing column constants**, check if `plataform.Entity[T]` exists:
+```bash
+grep -rn "type Entity\[" internal/plataform/ --include="*.go"
+```
 
+If `plataform.Entity[T]` exists in the project, column constants MUST use it
+instead of loose `const` strings. Loose constants lose table-grouping and
+don't integrate type-safely with the QueryBuilder.
+
+**Wrong** (loose constants in `queries.go`):
 ```go
-// domain/entity.go or repository/columns.go
+const (
+    cardTable          = "CARD"
+    cardIDColumn       = "CARD_ID"
+    cardStatusIDColumn = "CARD_STATUS_ID"
+    // 20+ more scattered constants...
+)
+```
+
+**Correct** (`plataform.Entity[T]` in `domain/entity.go`):
+```go
 type CardEntityColumns struct {
     CardID    string
     BlockType string
-    Status    string
+    StatusID  string
 }
 
 var CardEntity = plataform.Entity[CardEntityColumns]{
@@ -390,18 +407,23 @@ var CardEntity = plataform.Entity[CardEntityColumns]{
     Columns: CardEntityColumns{
         CardID:    "CARD_ID",
         BlockType: "BLOCK_TYPE_ID",
-        Status:    "CARD_STATUS_ID",
+        StatusID:  "CARD_STATUS_ID",
     },
 }
 ```
 
 Usage with QueryBuilder:
 ```go
-sql, args, _ := qb.Update(domain.CardEntity.Name).
-    Set(domain.CardEntity.Columns.Status, statusID).
-    Where(qb.Filter().Eq(domain.CardEntity.Columns.CardID, cardID)).
+sql, args, _ := r.qb.Update(domain.CardEntity.Name).
+    Set(domain.CardEntity.Columns.StatusID, statusID).
+    Where(r.qb.Filter().Eq(domain.CardEntity.Columns.CardID, cardID)).
     ToSQL()
 ```
+
+**Why**: `Entity[T]` groups columns by table (not scattered across a file),
+gives IDE autocomplete (`domain.CardEntity.Columns.` → all CARD columns),
+and prevents typos in column name strings. When the project already has the
+generic type, not using it is an anti-pattern.
 
 #### What to flag
 
@@ -421,6 +443,7 @@ Flag:
 - **No `ScanColumns()`**: repository scans 10+ columns inline → extract to `ScanColumns()` in `mapper.go`
 - **No mapper file**: Row → DTO conversion is inline in `sql_repository.go` → extract to `mapper.go`
 - **Scan order mismatch**: `ScanColumns()` field order doesn't match the SELECT column order in `queries.go`
+- **Loose column constants**: `queries.go` has 20+ `const cardXColumn = "X"` when `plataform.Entity[T]` exists → refactor to `Entity[T]` grouped by table in `domain/entity.go`
 
 ### 5. HTTP/handler patterns (SHOULD-FIX — handler phase)
 
