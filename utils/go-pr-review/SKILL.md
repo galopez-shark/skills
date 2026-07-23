@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.3.0"
+  version: "1.4.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -111,9 +111,12 @@ issues that linters often miss. Run BEFORE go-bricks checks.
 
 ### Phase 3 — go-bricks validation (this skill adds)
 
-After Phases 1-2, run the go-bricks checks below. These are
-**blockers** — a PR that reinvents a go-bricks type or breaks layer
-boundaries is not ready to merge regardless of NKH1 compliance.
+Two sub-phases:
+- **3a — Anti-patterns**: check that the PR doesn't reinvent go-bricks types
+  or break layer boundaries (blockers).
+- **3b — Discovery**: actively explore go-bricks source to find utilities,
+  helpers, or patterns that the PR COULD be using but isn't. This is not about
+  blocking — it's about leveraging go-bricks' full potential.
 
 ### Phase 4 — Scope & evidence verification
 
@@ -392,6 +395,98 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 
 ---
 
+## go-bricks discovery (Phase 3b — SHOULD-FIX)
+
+Phase 3a (checks 1-10) catches anti-patterns. Phase 3b actively explores what
+go-bricks offers that the PR could leverage. The goal is to maximize the
+framework's value — not to block, but to suggest better implementations.
+
+### How to discover
+
+**Step 1 — Identify what the PR is doing** (from the diff):
+- Adding HTTP calls? → explore `httpclient` package
+- Adding DB queries? → explore `database` package
+- Adding error responses? → explore `server` error types
+- Adding config? → explore `config` injection
+- Adding tests? → explore `mocks`, `fixtures`, `testutil`
+- Adding middleware? → explore `server` middleware
+- Adding crypto/JWE? → explore `cryptoutil`
+
+**Step 2 — Read go-bricks source for that area**:
+```bash
+# Find go-bricks module cache path
+BRICKS=$(go env GOMODCACHE)/github.com/gaborage/go-bricks@$(grep go-bricks go.mod | awk '{print $2}')
+
+# List all exported types/functions in a package
+grep -rn "^func \|^type " $BRICKS/<package>/*.go | grep -v _test.go
+
+# Example: what does httpclient offer?
+grep -rn "^func \|^type " $BRICKS/httpclient/*.go | grep -v _test.go
+
+# Example: what error types does server provide?
+grep -rn "^func New.*Error\|^type .*Error" $BRICKS/server/*.go | grep -v _test.go
+
+# Example: what test helpers exist?
+grep -rn "^func \|^type " $BRICKS/mocks/*.go
+grep -rn "^func \|^type " $BRICKS/fixtures/*.go
+```
+
+**Step 3 — Compare with what the PR implements**:
+
+For each piece of custom code in the PR, ask:
+- Does go-bricks already have a function/type that does this?
+- Does go-bricks have a pattern for this that's different from what the PR does?
+- Is the PR using a go-bricks type but missing features it offers? (e.g. using
+  `httpclient.Client` but not its retry config, or using `database.Interface`
+  but not its transaction helpers)
+
+### What to look for (common missed go-bricks features)
+
+| PR is doing... | go-bricks might offer... | Where to check |
+|----------------|--------------------------|----------------|
+| Custom HTTP error wrapping | `httpclient.IsErrorType`, `httpclient.HTTPError`, `httpclient.NetworkError` | `$BRICKS/httpclient/errors.go` |
+| Manual retry loops | `httpclient` built-in retry with `MaxRetries` config | `$BRICKS/httpclient/config.go` |
+| Custom request building | `httpclient.Request` with Headers, Body, URL | `$BRICKS/httpclient/types.go` |
+| Manual JSON response | `server.NewResult`, `server.NewErrorResult` | `$BRICKS/server/result.go` |
+| Custom error codes | `server.NewBadRequestError`, `server.NewNotFoundError`, etc. | `$BRICKS/server/errors.go` |
+| Manual DB transaction | `database.Interface.Begin()`, `tx.Commit()`, `tx.Rollback()` | `$BRICKS/database/` |
+| Custom test DB setup | `mocks.MockDatabase`, `mocks.MockTx`, `fixtures.NewMockRows` | `$BRICKS/mocks/`, `$BRICKS/fixtures/` |
+| Manual config reading | `config.InjectInto` with struct tags | `$BRICKS/config/` |
+| Custom logging setup | `logger.New`, `logger.Logger` interface | `$BRICKS/logger/` |
+| Manual context propagation | go-bricks `httpclient.Do` auto-propagates context | `$BRICKS/httpclient/client.go` |
+| Custom health check | `server.HealthCheck` handler | `$BRICKS/server/health.go` |
+| Custom middleware | `server.Middleware` interface | `$BRICKS/server/middleware.go` |
+
+### Reporting go-bricks discovery findings
+
+Use tag `[go-bricks-oportunidad]` (ES) / `[go-bricks-opportunity]` (EN):
+
+> `[go-bricks-oportunidad]` El PR implementa retry manual con `for` loop en
+> `client.go:45` — go-bricks `httpclient` ya tiene retry built-in configurable
+> vía `MaxRetries`. Usar la configuración nativa simplifica el código y garantiza
+> backoff exponencial.
+
+These are **SHOULD-FIX**, not blockers — the code works, but it's not using
+the framework's full potential. Exception: if the custom implementation has a
+bug that go-bricks' version doesn't (e.g. missing backoff, no jitter), elevate
+to **BLOCKER** because the fix is "use go-bricks".
+
+### go-bricks version check (MANDATORY at start)
+
+Before any review, verify go-bricks is on the latest version:
+```bash
+# Current version in the project
+grep 'go-bricks' go.mod
+
+# Latest available (check go proxy)
+GOPROXY=https://proxy.golang.org go list -m -versions github.com/gaborage/go-bricks 2>/dev/null | awk '{print $NF}'
+```
+
+If the project is behind, note it as a **NIT** — unless the latest version has
+a fix relevant to the PR's code, in which case elevate to **SHOULD-FIX**.
+
+---
+
 ## Scope & evidence verification (Phase 4)
 
 ### 16. Scope containment (SHOULD-FIX)
@@ -500,6 +595,16 @@ go-bricks type names stay in English (they are code).
 
 ---
 
+## Oportunidades go-bricks
+
+### 1. [go-bricks-oportunidad] {título corto}
+**Archivo**: `path/to/file.go:45`
+**Actualmente**: {lo que el PR implementa manualmente}
+**go-bricks ofrece**: {función/tipo que lo reemplaza}
+**Beneficio**: {por qué es mejor usar go-bricks}
+
+---
+
 ## Nombres y convenciones
 
 | # | Archivo | Actual | Sugerido | Regla |
@@ -536,6 +641,9 @@ go-bricks type names stay in English (they are code).
 | Sin resource leaks | ✅/❌/⚠️ | |
 | Fail-closed en fallos | ✅/❌/N/A | |
 | Calidad de tests | ✅/❌/⚠️ | |
+| **go-bricks discovery** | | |
+| Versión go-bricks actualizada | ✅/❌ | |
+| Sin oportunidades go-bricks perdidas | ✅/❌ | {N} oportunidades encontradas |
 | **Scope & evidencia** | | |
 | Scope contenido (1 módulo/tema) | ✅/❌ | |
 
@@ -588,6 +696,16 @@ go-bricks type names stay in English (they are code).
 
 ---
 
+## go-bricks opportunities
+
+### 1. [go-bricks-opportunity] {short title}
+**File**: `path/to/file.go:45`
+**Currently**: {what the PR implements manually}
+**go-bricks offers**: {function/type that replaces it}
+**Benefit**: {why go-bricks is better}
+
+---
+
 ## Naming & conventions
 
 | # | File | Current | Suggested | Rule |
@@ -624,6 +742,9 @@ go-bricks type names stay in English (they are code).
 | No resource leaks | ✅/❌/⚠️ | |
 | Fail-closed on errors | ✅/❌/N/A | |
 | Test quality | ✅/❌/⚠️ | |
+| **go-bricks discovery** | | |
+| go-bricks version up to date | ✅/❌ | |
+| No missed go-bricks opportunities | ✅/❌ | {N} opportunities found |
 | **Scope & evidence** | | |
 | Scope contained (1 module/topic) | ✅/❌ | |
 
