@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.6.0"
+  version: "1.7.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -728,10 +728,25 @@ should provide evidence or the reviewer should re-check in a follow-up.
 
 ---
 
-## Reporting — Markdown output
+## Reporting — Markdown output file
 
-The final report MUST be formatted as **inline markdown** delivered directly to the user
-(never create a file). The report language depends on the `LANG` parameter:
+The final report MUST be written to a **temporary `.md` file** so the user can open it
+and copy-paste the contents directly into a GitHub PR comment. The file naming convention:
+
+```
+docs/reviews/pr-{PR_NUMBER}-review.md
+```
+
+**Steps**:
+1. Create the `docs/reviews/` directory if it doesn't exist
+2. Write the full GFM report to `docs/reviews/pr-{PR_NUMBER}-review.md`
+3. Tell the user the file path so they can open and copy
+4. The file is NOT meant to be committed — it's a working artifact for copy-paste
+
+**IMPORTANT**: The `docs/reviews/` folder should be in `.gitignore`. If it's not,
+remind the user to add it (or at minimum, never commit review files).
+
+The report language depends on the `LANG` parameter:
 
 - **No `LANG` or `ES`** → Spanish (default)
 - **`EN`** → English
