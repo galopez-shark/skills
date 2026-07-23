@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.5.0"
+  version: "1.5.1"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -474,6 +474,45 @@ Flag if:
 - A new DTO duplicates fields from an existing shared type
 - A helper function reimplements something in `internal/plataform/`
 
+### 8b. File & struct placement (SHOULD-FIX)
+
+Every struct, type, and file must live in the folder that matches its responsibility.
+Misplaced types create confusing imports and break the module's layering contract.
+
+**Rules**:
+
+| Type | Belongs in | NOT in |
+|------|-----------|--------|
+| DTOs for API request/response (`json:` tags) | `domain/dto.go` | `repository/`, `service/`, `handlers/` |
+| DTOs for repository input params (write args) | `repository/dto.go` if repo-only; `domain/dto.go` if service also uses it | `repository/interface.go` (mixed with interface def) |
+| Row structs for DB scan (`sql.Null*`) | `repository/mapper.go` | `domain/`, `service/` |
+| Entity structs for DB writes (column metadata) | `domain/entity.go` | `repository/` (unless repo-internal only) |
+| Error sentinels (`ErrNotFound`, `ErrInvalid*`) | `domain/errors.go` | `repository/`, `service/` |
+| Business constants (status codes, block types) | `domain/constants.go` | `repository/`, `handlers/` |
+| SQL queries as `const` | `repository/queries.go` | inline in `sql_repository.go` |
+| Mapper functions (Row → DTO) | `repository/mapper.go` | scattered in `sql_repository.go` |
+| Interface definitions | `repository/interface.go`, `service/interface.go` | `domain/` (domain has no interfaces) |
+
+**Why this matters**: When `service/` needs to pass params to `repository/`, it should
+import from `domain/` (shared by both layers), not from `repository/` directly. A
+`repository.UpdateCardStatusParams` imported by `service/` means service depends on
+repository — violating the dependency rule (service → domain ← repository).
+
+**What to flag**:
+```bash
+# DTOs in repository/ that service/ imports (wrong direction)
+grep -rn "repository\." <module>/service/ --include="*.go" | grep -v _test.go | grep -v "CardRepository"
+
+# Structs in wrong package — look for types that don't match their folder's role
+grep -rn "type.*Params\|type.*Request\|type.*Response" <module>/repository/ --include="*.go" | grep -v _test.go
+```
+
+Flag:
+- **DTO in wrong file**: `repository/interface.go` has `UpdateCardStatusParams` mixed with the interface → move to `repository/dto.go` (repo-only params) or `domain/dto.go` (if service needs it too)
+- **Query inline**: SQL string built inside `sql_repository.go` → extract to `queries.go` as `const`
+- **Mapper scattered**: Row → DTO conversion in `sql_repository.go` → extract to `mapper.go`
+- **Error in wrong layer**: error sentinel defined in `repository/` → move to `domain/errors.go`
+
 ### 9. Go naming & conventions (SHOULD-FIX)
 
 Check all new identifiers against Go and project conventions:
@@ -769,6 +808,7 @@ Items que no bloquean el merge pero conviene tener en cuenta para futuros commit
 | Cableado de módulo correcto | ✅/N/A | |
 | Patrones de BD seguidos | ✅/N/A | |
 | Entity/Row mapping correcto | ✅/N/A | Row struct + ScanColumns + mapper |
+| Ubicación de archivos/structs | ✅/N/A | DTOs en domain, Row en repository |
 | Patrones de handler correctos | ✅/N/A | |
 | Llamadas externas vía httpclient | ✅/N/A | |
 | Patrones de test correctos | ✅/N/A | |
