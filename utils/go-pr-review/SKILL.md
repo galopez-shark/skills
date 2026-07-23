@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.2.0"
+  version: "1.3.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -77,6 +77,20 @@ A wrong branch means a wrong review — this is a hard rule, not a suggestion.
 
 ---
 
+## Anti-racionalización (NO saltar pasos)
+
+Antes de empezar, rechazar estos atajos mentales:
+
+| Racionalización | Por qué está mal | Acción requerida |
+|-----------------|-------------------|------------------|
+| "PR pequeño, revisión rápida" | Heartbleed fueron 2 líneas | Clasificar por RIESGO, no por tamaño |
+| "Solo es un refactor, no hay impacto" | Los refactors rompen invariantes | Analizar como riesgo ALTO hasta probar lo contrario |
+| "Los tests pasan, está bien" | Los tests pueden ser tautológicos o cubrir solo el happy path | Verificar que los tests fallarían sin el cambio |
+| "Conozco este codebase" | La familiaridad crea puntos ciegos | Seguir el checklist de todas formas |
+| "El autor es experimentado" | Revisar el código, no la reputación | Aplicar los mismos criterios siempre |
+
+---
+
 ## Review order
 
 ### Phase 1 — NKH1 standard (common:pr-review)
@@ -90,11 +104,109 @@ Run the full NKH1 review first:
 6. **Tests**: ≥70% coverage on changed code, error paths covered
 7. **Style**: defer to linters (golangci-lint, gofmt, staticcheck)
 
-### Phase 2 — go-bricks validation (this skill adds)
+### Phase 2 — Bug hunting & code smells (Go-specific)
 
-After the NKH1 review, run the go-bricks checks below. These are
+Analyze the diff for common Go bugs and code smells. These are correctness
+issues that linters often miss. Run BEFORE go-bricks checks.
+
+### Phase 3 — go-bricks validation (this skill adds)
+
+After Phases 1-2, run the go-bricks checks below. These are
 **blockers** — a PR that reinvents a go-bricks type or breaks layer
 boundaries is not ready to merge regardless of NKH1 compliance.
+
+### Phase 4 — Scope & evidence verification
+
+After all checks, verify scope containment and evidence quality.
+
+---
+
+## Bug hunting & code smells (Phase 2)
+
+These checks target correctness bugs and code smells that linters often miss.
+Every finding MUST cite file:line and a concrete failure scenario.
+
+### 11. Error handling bugs (BLOCKER)
+
+```bash
+# Ignored errors — the returned error is assigned to _ or not checked
+grep -n "_ = .*\.\(Do\|Query\|Exec\|Close\|Scan\|Decode\|Unmarshal\)" <changed-files> --include="*.go" | grep -v _test.go
+
+# Error checked but original error lost (wrapped without %w)
+grep -n 'fmt\.Errorf.*[^%]"' <changed-files> --include="*.go" | grep -v "%w" | grep -v _test.go
+
+# Shadowed err in nested scope (re-declares err with := inside an if/for that already has err)
+# Manual inspection: look for `err :=` inside a block that has an outer `err`
+```
+
+Flag:
+- **Swallowed errors**: `_ = rows.Close()` — an error during Close can mask data loss
+- **Lost error chain**: `fmt.Errorf("failed: %s", err)` instead of `%w` — breaks `errors.Is/As`
+- **Shadowed err**: inner `:=` silently discards outer err; use `=` instead
+- **Nil pointer after error check**: `if err != nil { ... }` followed by using the value without checking `nil`
+- **Deferred Close without error check**: `defer resp.Body.Close()` — should check or log the error
+
+### 12. Concurrency bugs (BLOCKER)
+
+```bash
+# Goroutine leaks — goroutine started without cancellation path
+grep -n "go func\|go .*(" <changed-files> --include="*.go" | grep -v _test.go
+
+# Missing mutex for shared state
+grep -n "sync\.Mutex\|sync\.RWMutex" <changed-files> --include="*.go"
+```
+
+Flag:
+- **Goroutine without context**: `go func()` that doesn't receive `ctx` or a done channel
+- **Shared state without sync**: struct fields accessed from multiple goroutines without mutex
+- **Channel not closed**: producer goroutine that never closes the channel (consumer blocks forever)
+- **Race-prone map**: concurrent `map` read/write without `sync.Mutex` or `sync.Map`
+
+### 13. Resource leaks (BLOCKER)
+
+```bash
+# HTTP response body not closed
+grep -n "\.Do(\|\.Get(\|\.Post(" <changed-files> --include="*.go" | grep -v _test.go
+# Then verify each has a defer res.Body.Close() nearby
+
+# SQL rows not closed
+grep -n "\.Query\|\.QueryRow\|\.QueryContext" <changed-files> --include="*.go" | grep -v _test.go
+# Then verify each has defer rows.Close()
+
+# File handles not closed
+grep -n "os\.Open\|os\.Create" <changed-files> --include="*.go" | grep -v _test.go
+```
+
+Flag:
+- **Response body leak**: `http.Do()` result without `defer res.Body.Close()`
+- **SQL rows leak**: `db.Query()` without `defer rows.Close()`
+- **File handle leak**: `os.Open()` without `defer f.Close()`
+
+### 14. Fail-closed validation (SHOULD-FIX)
+
+When an operation fails (network timeout, parse failure, API error), the code
+must deny/fail safely, not silently proceed with stale or empty data.
+
+Flag:
+- **Silent fallback**: catch block returns empty/default data instead of propagating the error
+- **Missing validation on external response**: external API response parsed without checking status
+- **Stale cache on error**: cache miss + fetch error → returns stale value without logging
+
+### 15. Test quality (SHOULD-FIX)
+
+Go beyond "tests exist" — verify tests are meaningful:
+
+- [ ] **Regression value**: would the test FAIL if the production code it targets were removed?
+- [ ] **No mock-only assertions**: test asserts on real behavior, not just that a mock was called
+- [ ] **Error paths covered**: not just happy path — test what happens when the DB is down, API returns 500, input is malformed
+- [ ] **No tautological assertions**: `assert.Equal(t, result, result)` or asserting the mock's return value
+- [ ] **Complete mocks**: mock objects mirror the full shape of the real object, not just the fields the author expected
+- [ ] **No weakened assertions**: existing assertions not removed or relaxed to make tests pass
+
+```bash
+# Check if tests were weakened — removed assertions
+git diff origin/main...pr-<N> -- "*_test.go" | grep "^-.*assert\|^-.*require" | grep -v "^---"
+```
 
 ---
 
@@ -280,6 +392,55 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 
 ---
 
+## Scope & evidence verification (Phase 4)
+
+### 16. Scope containment (SHOULD-FIX)
+
+Verify the PR touches only one logical scope. A PR that mixes concerns is
+harder to review, test, and revert.
+
+```bash
+# List all modules touched by the PR
+git diff origin/main...pr-<N> --stat | grep "internal/modules/" | sed 's|internal/modules/\([^/]*\)/.*|\1|' | sort -u
+
+# List all layers touched per module
+git diff origin/main...pr-<N> --stat | grep "internal/modules/" | sed 's|internal/modules/[^/]*/\([^/]*\)/.*|\1|' | sort -u
+```
+
+Flag:
+- **Multi-module PR**: touches `accounts/` AND `cards/` without shared-infra justification
+- **Multi-layer PR**: touches `domain/` AND `handlers/` in the same module (should be separate phases)
+- **Unrelated changes**: config bump + new feature + test fix in one PR
+
+Exception: changes in `internal/plataform/` (shared infra) that are consumed by the module
+changes are acceptable.
+
+### 17. Evidence-based findings (MANDATORY)
+
+Every finding in the report MUST include:
+- **Archivo/File**: exact `path/to/file.go:line`
+- **Evidencia/Evidence**: the command or code snippet that proves the finding
+- **Escenario de fallo/Failure scenario**: concrete inputs → wrong output/crash
+
+A finding without evidence is speculation, not a review finding. If a check
+cannot be verified (e.g. tests can't be run, file not accessible), use the
+ternary verdict ⚠️ `NO VERIFICADO` instead of guessing.
+
+### Verdict system (ternary)
+
+Each check in the gate summary table uses three states:
+
+| Estado | Significado |
+|--------|-------------|
+| ✅ | Verificado y correcto |
+| ❌ | Verificado y con problemas — citar evidencia |
+| ⚠️ | No se pudo verificar — explicar por qué (ej: sin acceso a tests, archivo no accesible) |
+
+A ⚠️ is NOT a pass — it means the reviewer acknowledges a gap. The PR author
+should provide evidence or the reviewer should re-check in a follow-up.
+
+---
+
 ## Reporting — Markdown output
 
 The final report MUST be formatted as **inline markdown** delivered directly to the user
@@ -301,6 +462,8 @@ go-bricks type names stay in English (they are code).
 **Repo**: {org/repo}
 **Rama**: {branch} → main
 **Archivos**: {count} | **Líneas**: +{added} / -{removed}
+**Riesgo**: ALTO / MEDIO / BAJO
+**Scope**: {módulos tocados} | {capas tocadas}
 
 ---
 
@@ -309,6 +472,8 @@ go-bricks type names stay in English (they are code).
 ### 1. [NKH1] {título corto}
 **Archivo**: `path/to/file.go:42`
 **Problema**: {qué está mal}
+**Evidencia**: {comando o snippet que lo prueba}
+**Escenario de fallo**: {inputs concretos → resultado incorrecto}
 **Corrección**:
 \`\`\`go
 // corrección sugerida
@@ -317,11 +482,20 @@ go-bricks type names stay in English (they are code).
 ### 2. [go-bricks] {título corto}
 ...
 
+### 3. [bug] {título corto}
+...
+
 ---
 
 ## Debe corregirse
 
 ### 1. [go-bricks] {título corto}
+...
+
+### 2. [calidad-test] {título corto}
+...
+
+### 3. [scope] {título corto}
 ...
 
 ---
@@ -341,12 +515,13 @@ go-bricks type names stay in English (they are code).
 
 ---
 
-## Resumen de validación go-bricks
+## Resumen de validación
 
 | Verificación | Estado | Notas |
 |-------------|--------|-------|
-| Sin tipos reinventados | ✅/❌ | |
-| Límites de capa correctos | ✅/❌ | |
+| **go-bricks** | | |
+| Sin tipos reinventados | ✅/❌/⚠️ | |
+| Límites de capa correctos | ✅/❌/⚠️ | |
 | Cableado de módulo correcto | ✅/N/A | |
 | Patrones de BD seguidos | ✅/N/A | |
 | Patrones de handler correctos | ✅/N/A | |
@@ -355,8 +530,16 @@ go-bricks type names stay in English (they are code).
 | Sin código duplicado | ✅/❌ | |
 | Nombres y convenciones | ✅/❌ | |
 | Config completa | ✅/N/A | |
+| **Bugs & code smells** | | |
+| Manejo de errores | ✅/❌/⚠️ | |
+| Sin bugs de concurrencia | ✅/❌/N/A | |
+| Sin resource leaks | ✅/❌/⚠️ | |
+| Fail-closed en fallos | ✅/❌/N/A | |
+| Calidad de tests | ✅/❌/⚠️ | |
+| **Scope & evidencia** | | |
+| Scope contenido (1 módulo/tema) | ✅/❌ | |
 
-**Veredicto**: ✅ Aprobado / ❌ {N} bloqueadores pendientes
+**Veredicto**: ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
 ```
 
 ### Template — English (when `LANG=EN`)
@@ -367,6 +550,8 @@ go-bricks type names stay in English (they are code).
 **Repo**: {org/repo}
 **Branch**: {branch} → main
 **Files**: {count} | **Lines**: +{added} / -{removed}
+**Risk**: HIGH / MEDIUM / LOW
+**Scope**: {modules touched} | {layers touched}
 
 ---
 
@@ -375,6 +560,8 @@ go-bricks type names stay in English (they are code).
 ### 1. [NKH1] {short title}
 **File**: `path/to/file.go:42`
 **Issue**: {what's wrong}
+**Evidence**: {command or snippet that proves it}
+**Failure scenario**: {concrete inputs → wrong output/crash}
 **Fix**:
 \`\`\`go
 // suggested fix
@@ -383,11 +570,20 @@ go-bricks type names stay in English (they are code).
 ### 2. [go-bricks] {short title}
 ...
 
+### 3. [bug] {short title}
+...
+
 ---
 
 ## Should-fix
 
 ### 1. [go-bricks] {short title}
+...
+
+### 2. [test-quality] {short title}
+...
+
+### 3. [scope] {short title}
 ...
 
 ---
@@ -407,12 +603,13 @@ go-bricks type names stay in English (they are code).
 
 ---
 
-## go-bricks gate summary
+## Validation summary
 
 | Check | Status | Notes |
 |-------|--------|-------|
-| No reinvented types | ✅/❌ | |
-| Layer boundaries clean | ✅/❌ | |
+| **go-bricks** | | |
+| No reinvented types | ✅/❌/⚠️ | |
+| Layer boundaries clean | ✅/❌/⚠️ | |
 | Module wiring correct | ✅/N/A | |
 | DB patterns followed | ✅/N/A | |
 | Handler patterns correct | ✅/N/A | |
@@ -421,8 +618,16 @@ go-bricks type names stay in English (they are code).
 | No duplicate code | ✅/❌ | |
 | Naming & conventions | ✅/❌ | |
 | Config complete | ✅/N/A | |
+| **Bugs & code smells** | | |
+| Error handling | ✅/❌/⚠️ | |
+| No concurrency bugs | ✅/❌/N/A | |
+| No resource leaks | ✅/❌/⚠️ | |
+| Fail-closed on errors | ✅/❌/N/A | |
+| Test quality | ✅/❌/⚠️ | |
+| **Scope & evidence** | | |
+| Scope contained (1 module/topic) | ✅/❌ | |
 
-**Verdict**: ✅ Approve / ❌ {N} blockers remain
+**Verdict**: ✅ Approve / ⚠️ Not verified ({reason}) / ❌ {N} blockers remain
 ```
 
 Mark checks as N/A when the PR doesn't touch that layer (e.g., domain-only
