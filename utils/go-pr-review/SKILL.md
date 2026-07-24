@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.8.0"
+  version: "1.8.1"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -825,7 +825,9 @@ Target path (in order of preference):
 **Steps**:
 1. Resolve the temp dir (scratchpad if available, else `$TMPDIR`/`/tmp`).
 2. Write the full GFM report to `<tempdir>/pr-{PR_NUMBER}-review.md`.
-3. Tell the user the absolute file path so they can open and copy it.
+3. Give the user an OPENABLE reference, not just the raw path: a clickable
+   `file://<abs-path>` markdown link AND an open command — `code "<abs-path>"`
+   (VS Code) or `open "<abs-path>"` (macOS) — so they can open it in one click.
 
 **Never** write review files inside the reviewed repo, and never `git add`/commit
 them. (This is distinct from PR *description* text, which is delivered inline in
