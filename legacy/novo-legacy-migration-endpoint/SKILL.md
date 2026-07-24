@@ -1012,9 +1012,6 @@ Every repo repeats the same `getDB → Query → rows.Next/Scan/rows.Err → wra
 - The **caller passes the domain not-found error** so business codes reach the handler; infra is
   wrapped 500 with an `opName` for diagnostics.
 
-(This is a candidate to upstream into go-bricks once the error wrapping is decoupled from the app's
-error type — the app would supply an error-mapper or the helpers return sentinel errors it maps.)
-
 ### 4. Correctness details
 
 - **Fixed-width `CHAR(n)` columns** return space-padded values — `strings.TrimSpace` before comparing
