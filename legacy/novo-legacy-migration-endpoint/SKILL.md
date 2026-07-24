@@ -4,9 +4,9 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.2.0"
+  version: "4.3.0"
   domain: migration
-  triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap
+  triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
   scope: implementation
   output-format: code
@@ -26,6 +26,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate parity-solve <endpoint> cases (<ids>)` (alias `solve-parity`) — plan fixes for the selected verify-parity divergences (≤300 new lines / ≤10 files per phase)
 - `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list (testRigor-style, con IDs `EST-NN`) — QA testing del Go + base de la tabla de escenarios del Plan de Desarrollo
 - `/migrate techdoc <endpoint>` (alias `doc-tecnico`) — generate the technical doc (scope, glossary, structure, construction) + class/flow/data diagrams as images (asks for the output folder)
+- `/migrate devplan <endpoint>` (alias `plan-dev`) — generate the Jira development plan (Plan de Desarrollo) for an endpoint: context, technical description, files, acceptance criteria, DoD, technical notes — formatted for direct update to Jira ticket description
 - `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
 
 ---
@@ -53,6 +54,9 @@ SUBCOMMANDS
                                base de la tabla de escenarios del Plan de Desarrollo (alias: casos).
   /migrate techdoc <ep>        Technical doc (scope, glossary, structure, construction) + class/flow/
                                data diagrams as images. ASKS for the output folder (alias: doc-tecnico).
+  /migrate devplan <ep>        Jira development plan (Plan de Desarrollo): context, tech description,
+                               files, acceptance criteria, DoD, tech notes. Updates Jira ticket
+                               description directly (alias: plan-dev).
   /migrate help                This help (alias: ?).
 
 REQUIRES  .migration-context.yaml — run /migration-context first to create it.
@@ -623,7 +627,179 @@ Cada caso se redacta así:
 
 ---
 
-## Subcommand: `/migrate techdoc <endpoint>` (alias `doc-tecnico`)
+## Subcommand: `/migrate devplan <endpoint>` (alias `plan-dev`)
+
+Generates the **Plan de Desarrollo** (development plan) for a migration endpoint and updates the
+Jira ticket description directly. This is the developer-facing technical document that lives in
+Jira — written in developer language (Spanish), with the exact structure used by the team
+(modeled after CEB-5602 blockUnblock).
+
+Accept the endpoint by name, number, or Java method name.
+
+### Workflow
+
+1. **Load `.migration-context.yaml`** — if missing, tell the user to run `/migration-context` first.
+2. **Resolve the endpoint** in `endpoint_inventory`. Get the ticket number. If no ticket, ask the user.
+3. **Read the Java source** (resource/controller + service + dao/repository) + properties files —
+   same source-of-truth as other subcommands. Java code is the spec.
+4. **Read the Go source** if the endpoint is already migrated (`status: done` or `in_progress`) —
+   `internal/modules/<go_module>/` (handlers, service, repository, domain). If `not_started`, derive
+   the plan from the Java analysis + existing Go patterns in the project.
+5. **Generate the Plan de Desarrollo** following the template below (6 numbered sections).
+6. **Present to the user** for review. Show the full document in chat.
+7. **Ask**: update Jira ticket description? (yes/no)
+   - If yes → convert to ADF and PUT to the ticket via Jira REST API.
+   - If no → done, the user copies it manually.
+
+### Template (6 sections — MANDATORY, in this exact order)
+
+The generated plan MUST follow this structure. All content in **Spanish**. Derive everything from
+the actual Java source + Go code — never invent.
+
+```
+## 1. Contexto / Motivación
+
+{Qué endpoint es, en qué servicio Java vive (clase + método), qué hace funcionalmente.
+Si el módulo Go ya existe, mencionarlo. Si reutiliza componentes de otros módulos, listarlos.
+Mencionar si es simétrico a un endpoint ya migrado (ej. cashOut es simétrico a cashIn).
+Lenguaje directo de developer — sin marketing ni user stories.}
+
+## 2. Descripción técnica
+
+### Ruta y método
+
+{HTTP_METHOD} /core/{module}/v1/{path}
+Authorization: Bearer <token>
+Content-Type: application/json
+{Si JWE: Body: {"data": "<JWE compact>"}}
+
+### Flujo (Java parity — {JavaClass}.{javaMethod})
+
+{Lista numerada o con bullets de CADA paso del flujo, en orden de ejecución:
+- Validaciones (con el código de error que dispara cada una)
+- Consultas a DB (qué tabla, qué campos)
+- Llamadas a servicios externos (método HTTP, path, qué envía)
+- Interpretación de respuesta externa
+- Persistencia en DB (INSERT/UPDATE, dentro de transacción si aplica)
+- Construcción de respuesta
+
+Para cada paso que puede fallar, indicar: condición → rc/msg/HTTP.
+Si hay mejoras de Go sobre Java (bugs corregidos), mencionarlas con "Mejora respecto a Java:".
+Si hay diferencias con endpoints similares, incluir tabla comparativa.}
+
+### Request body {(JWE-descifrado) si aplica}
+
+| Campo | Tipo | Requerido | Valores válidos / Default |
+|-------|------|-----------|--------------------------|
+| {field} | {type} | {Sí/No} | {valores o default} |
+
+### Response {(JWE-cifrado) si aplica}
+
+```json
+{response body literal — rc, msg, y campos de datos}
+```
+
+### Errores de negocio
+
+| Condición | HTTP | rc | Mensaje |
+|-----------|------|----|---------|
+| {condición que dispara el error} | {HTTP status} | {rc code} | {mensaje EXACTO de RESPONSE_CODES} |
+
+{Incluir TODOS los errores: auth (-102, -122), validación (400), negocio (4xx), externos, Oracle (500).
+Ordenar por el flujo: auth → validación → negocio → externo → DB → éxito.}
+
+## 3. Archivos creados / modificados
+
+{Árbol de archivos del módulo Go con una descripción corta por archivo:}
+
+internal/modules/{module}/
+  domain/dto.go                    <- {qué contiene}
+  domain/entity.go                 <- {qué contiene}
+  handlers/handler.go              <- {qué contiene}
+  handlers/handler_test.go         <- {N casos: listar los nombres}
+  service/service.go               <- {qué contiene}
+  service/in_out.go                <- {qué contiene}
+  service/service_test.go          <- {table-driven, qué cubre}
+  repository/repository.go         <- {interfaces}
+  repository/sql_repository.go     <- {qué operaciones}
+  repository/sql_repository_test.go <- {N casos: listar categorías}
+  module.go                        <- {wiring y registro de ruta}
+
+{Si modifica archivos fuera del módulo (main.go, config, shared), listarlos.}
+
+Reutilizado sin duplicar: {lista de componentes compartidos que se reusan}
+
+## 4. Criterios de aceptación
+
+{Lista de criterios verificables — sin checkboxes, texto plano:}
+- {Criterio 1: qué debe hacer el endpoint ante un request válido}
+- {Criterio 2: qué tablas se actualizan y cómo}
+- {Criterio 3: qué servicios externos se llaman y en qué orden}
+- {Criterio 4: paridad de errores con Java}
+- {Criterio 5: make check pasa con 0 issues}
+- {Criterio 6: cobertura >= 85%}
+
+## 5. Definition of Done
+
+{Lista de condiciones para considerar el ticket DONE:}
+- PR revisado y aprobado ({branch names de las fases})
+- make check limpio (0 lint issues, 0 race conditions)
+- Mensajes de error verificados contra Java {servicio Java fuente}
+- Sin duplicación de lógica ya existente ({componentes reutilizados})
+- Documentación en docs/modules/{module}/ actualizada
+- Tests completados — {paquetes}: {cobertura%} por paquete
+
+## 6. Notas técnicas
+
+{Lista de bullets con notas relevantes para el developer:}
+- {Nota sobre transacciones Oracle si aplica}
+- {Nota sobre componentes reutilizados y dónde viven}
+- {Nota sobre httpClient: en Handler o en Service según patrón del módulo}
+- {Nota sobre auth: middleware, parámetro explícito, etc.}
+- {Nota sobre ramas de desarrollo y fases}
+- {Nota sobre cobertura final por paquete}
+```
+
+### Content rules
+
+- **Java source is the spec** — derive the flow, errors, and fields from the actual code, not from
+  memory or Jira descriptions. Read the Java handler + service + dao FIRST.
+- **Error messages are IMMUTABLE** — copy exactly from `RESPONSE_CODES.properties` or the Java code.
+- **Developer language** — escrito para devs, no para PO. Directo, técnico, sin user stories.
+- **Go-specific details** — if the endpoint is already migrated, include actual Go file names, test
+  case names, coverage numbers, branch names. If not migrated, use the estimated plan.
+- **Reutilización explícita** — always list what existing Go components are reused (CustomerReader,
+  Handler base, external clients, cryptoutil, etc.).
+- **Mejoras sobre Java** — if Go fixes a Java bug or improves behavior, call it out explicitly with
+  "Mejora respecto a Java:" and explain what changed.
+- **Diferencias con endpoints similares** — if the endpoint is symmetric to another (cashIn/cashOut,
+  block/unblock, associate/disassociate), include a comparison table showing the differences.
+
+### Jira update
+
+When the user approves the update:
+
+1. Convert the markdown to **Atlassian Document Format (ADF)** — headings, paragraphs, bullet lists,
+   tables, code blocks, inline code. Map each markdown element to its ADF equivalent.
+2. PUT to `https://jira4novo.atlassian.net/rest/api/3/issue/{TICKET_KEY}` with the ADF description.
+3. Confirm success:
+   ```
+   ✅ Plan de Desarrollo actualizado en {TICKET_KEY}
+   ```
+
+### When to use this vs other subcommands
+
+| Need | Subcommand |
+|------|-----------|
+| Jira ticket description (Plan de Desarrollo for devs) | **`devplan`** ← this one |
+| Jira ticket for PO (Historia de Usuario + subtasks) | `/migration-context ticket` |
+| Technical doc + diagrams (offline/docs folder) | `/migrate techdoc` |
+| QA test scenarios | `/migrate usecases` |
+| Java↔Go parity check | `/migrate verify-parity` |
+
+---
+
+
 
 Generates the endpoint's **technical document** (in text) + **three diagrams as images** (class, flow,
 data). Reads Java + Go; READ-ONLY on the project code — it only writes the diagram/image files into
@@ -783,6 +959,85 @@ Rules for this step:
 - If the source does NOT repeat reads/validations, state "sin reprocesos detectados" and move on.
 - **Wait for the user to confirm** the consolidation table before STEP 1. The confirmed consolidations
   are then reflected in the phase plan and called out in the PR.
+
+---
+
+## Reference — Data-access & repository patterns (project-agnostic)
+
+Apply these when writing or refactoring any repository layer. They are framework-level (go-bricks)
+and NOT tied to any one migration project.
+
+### 1. Prefer the typed query builder over raw SQL
+
+- Model each table as a typed descriptor `Entity[T]{ Name, Columns }` and build queries with the
+  go-bricks query builder (`qb.Select/Insert/Update/Delete`, `dbtypes.MustTable`, `qb.Filter()`,
+  `qb.JoinFilter()`, `OrderBy`, `qb.MustExpr`) instead of hand-written SQL strings.
+- Aliased joins: qualify columns as `"a."+e.Columns.Field`; `From(MustTable(e.Name).MustAs("a"))`,
+  `LeftJoinOn(MustTable(x.Name).MustAs("b"), jf.EqColumn("a.col","b.col"))`.
+- Replace the optional-filter trick `(:x IS NULL OR col = :x)` with a **conditional filter**:
+  `where := f.Eq(col, id); if x != "" { where = f.And(where, f.Eq(tokCol, x)) }` — cleaner, no
+  `*string` nil param, and it reads as intent.
+- Match the existing schema-qualification convention: if the module's already-migrated SELECTs use
+  UNqualified table names (relying on the connection's default schema), migrate writes the same way
+  (drop the `SCHEMA.` prefix) so both paths target one name. Flag the change in the PR.
+
+### 2. When a query CANNOT use the builder (keep it raw)
+
+- The builder **parameterizes the value side** of `Set(...)` / `Values(...)`. A DB-side function placed
+  there becomes a broken bind, NOT inline SQL. So `CURRENT_TIMESTAMP` / `SYSDATE` / sequence
+  `NEXTVAL` / `NVL(...)` / `||` concatenation in INSERT VALUES or UPDATE SET **cannot** be expressed
+  — keep those statements raw. (`RawExpression`/`MustExpr` inline only in SELECT / ORDER BY / Filter
+  value positions, never in Set/Values.)
+- Also keep raw: multi-table joins with a manual positional scan, `WITH` / `UNION`, optimizer hints,
+  `ROWNUM` tricks (or express `ROWNUM`/limit via `Limit()` / a `Raw` filter when clean).
+- **Verify empirically before classifying** a query as migratable: write a throwaway test that prints
+  `ToSQL()` and confirm no value silently became a bind (e.g. a `RawExpression` struct as an arg).
+  A paper audit of "migratable vs hard" is frequently wrong — the generated SQL is ground truth.
+
+### 3. Centralize the exec/error boilerplate — shared `Execute*` helpers
+
+Every repo repeats the same `getDB → Query → rows.Next/Scan/rows.Err → wrap` and
+`Exec → RowsAffected → wrap` flow. Extract it once into a module-agnostic
+`internal/plataform/repository/executor.go`:
+
+- `ExecuteQuerySingle(ctx, exec, query, opName, notFoundErr, dest...) error` — SELECT ≤1 row; no row
+  → `notFoundErr`; build/exec/scan/iter failures → `AppError(500)` labeled with `opName`.
+- `ExecuteUpdate(ctx, exec, query, opName, notFoundErr) (int64, error)` — 0 rows affected →
+  `notFoundErr`.
+- `ExecuteInsert(ctx, exec, query, opName) error`.
+- `Executor` interface `{ Query; Exec }` is satisfied by BOTH the plain connection and `dbtypes.Tx`
+  → the same helper runs inside or outside a transaction (`var _ Executor = (dbtypes.Tx)(nil)`).
+- `RawQuery{SQL, Args}` implements `ToSQL()` → keep-raw queries (UNION, `FOR UPDATE`) reuse the same
+  helpers, so even non-migratable SQL gets the centralized error handling.
+- The **caller passes the domain not-found error** so business codes reach the handler; infra is
+  wrapped 500 with an `opName` for diagnostics.
+
+(This is a candidate to upstream into go-bricks once the error wrapping is decoupled from the app's
+error type — the app would supply an error-mapper or the helpers return sentinel errors it maps.)
+
+### 4. Correctness details
+
+- **Fixed-width `CHAR(n)` columns** return space-padded values — `strings.TrimSpace` before comparing
+  or using them (else `status == ACTIVE` silently never matches).
+- **NULL ≠ empty**: scan into `sql.Null*` and treat NULL as "unavailable", distinct from `""`.
+- **SELECT column order is load-bearing** whenever a manual positional scan (`ScanColumns`) is used —
+  pin the exact ordered column list with a regression test asserting the generated SELECT.
+- **Best-effort audit writes**: do NOT discard the error. Return it separately (e.g.
+  `(auditErr, err error)`) so the service can log it (repositories don't log); the main operation
+  still commits. Test both the success and the audit-failure-still-commits paths.
+- **Deterministic audit values**: normalize the actor (e.g. upper-case) and use a fixed timezone for
+  audit timestamps.
+
+### 5. Testing gotchas
+
+- **testify `mock.Anything` shadowing**: `mock.Anything` also matches MISSING arguments, so a wider
+  expectation registered first (`On("Exec", anyN(16))`) will match and shadow a narrower call
+  (`anyN(5)`), returning the wrong stub. Disambiguate by pinning a discriminating argument — e.g. the
+  query constant: `On("Exec", append([]any{mock.Anything, query}, anyN(n)...)...)`.
+- Centralize error scenarios in shared table-driven helpers; always include the NULL case and any
+  actor/time fallback case.
+- Add a `ToSQL()`-pinning regression test for every builder-generated query, and keep per-package
+  coverage at target.
 
 ---
 
