@@ -4,7 +4,7 @@ description: "Go PR review for go-bricks services — extends the standard NKH1 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.7.0"
+  version: "1.8.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -445,6 +445,64 @@ Flag:
 - **Scan order mismatch**: `ScanColumns()` field order doesn't match the SELECT column order in `queries.go`
 - **Loose column constants**: `queries.go` has 20+ `const cardXColumn = "X"` when `plataform.Entity[T]` exists → refactor to `Entity[T]` grouped by table in `domain/entity.go`
 
+#### 4c. Query construction: QueryBuilder + `Entity[T]` vs raw SQL `const`
+
+`plataform.Entity[T]` + the go-bricks QueryBuilder is the **DEFAULT** for building
+queries — **including JOINs**. Follow zinli-business-be-go: table/column identifiers
+come from `Entity[T]` metadata and the QueryBuilder assembles the statement.
+
+**The builder DOES cover JOINs** — this is the most common review mistake: do NOT
+wave a JOIN through as "must stay a raw const". The builder supports:
+
+- `InnerJoinOn(dbtypes.MustTable(e.Name).MustAs("alias"), jf.EqColumn(...))`
+- `LeftJoinOn` / `RightJoinOn` for outer joins
+- `jf := qb.JoinFilter()` + `jf.EqColumn("a.col", "b.col")` for join predicates
+- `qb.MustExpr("CASE WHEN ... END", "ALIAS")` for CASE / functions / computed columns
+- `dbtypes.MustTable(e.Name).MustAs("at")` for table aliases
+- `OrderBy`, `Paginate`, `Where(qb.Filter().Eq(e.Columns.X, v))`
+
+Reference: zinli `auth/repository` `GetToken` builds a 3-table INNER JOIN with a
+`to_char(...)` expression via `MustExpr`, every identifier from `Entity[T]` metadata.
+
+**Decision tree:**
+
+| Query shape | How to build it |
+|-------------|-----------------|
+| Single-table CRUD, **or** JOINs (INNER/LEFT/RIGHT), CASE, functions, ORDER BY, pagination | **QueryBuilder + `Entity[T]`** — the default |
+| Set operations with no native builder support (`UNION [ALL]`, recursive CTE, vendor PL/SQL) | **Raw SQL `const` + `sql.Named`** — documented as the exception |
+
+**DO flag (SHOULD-FIX):**
+- A JOIN query hand-written as a raw `const` when the builder can express it →
+  migrate to builder + `Entity[T]`. **A multi-JOIN is NOT an automatic exception.**
+- **Two+ `const` queries identical except for the `WHERE`** → collapse into one
+  builder construction (shared SELECT + JOINs) that varies only `.Where(...)`.
+  Duplicated ~40-line SELECT bodies are a maintenance trap (e.g. a `ByCustomer`
+  and a `ByID` variant of the same lookup).
+- Table/column name string literals inline when an `Entity[T]` for that table
+  exists (or should exist).
+
+**Legitimately keep as `const`**: `UNION ALL`, set-ops, and constructs the builder
+cannot emit — note WHY in a comment above the const so the exception is explicit.
+
+#### 4d. Dead shared scaffolding (SHOULD-FIX)
+
+A shared generic/abstraction that exists but is never used is debt, not
+infrastructure — and it misleads future authors into thinking a pattern is "in
+use" when it is not.
+
+```bash
+# Entity[T] defined but never instantiated anywhere → dead scaffolding
+grep -rn "type Entity\[" internal/plataform/ --include="*.go"
+grep -rln "plataform.Entity\[" internal/ --include="*.go" | grep -v _test.go  # 0 hits = dead
+```
+
+Flag:
+- **`Entity[T]` defined, zero usages**: the generic exists but no
+  `XxxEntityColumnsMetadata` is declared and no query uses it → either **seed** the
+  pattern (define metadata for at least the tables the touched module queries, and
+  build with it) or **delete** the dead type. SHOULD-FIX, not a blocker.
+- Same for any `internal/plataform/` helper/type with no callers.
+
 ### 5. HTTP/handler patterns (SHOULD-FIX — handler phase)
 
 When the diff touches handler code:
@@ -583,6 +641,29 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 - [ ] Key exists in both `config.yml` (env vars) and `config.yaml` (local values)
 - [ ] New config key follows existing naming convention
 - [ ] Sensitive values use env var placeholders, not hardcoded
+
+### 10b. Semantic version bump in config.yml (SHOULD-FIX — REQUIRED on every PR)
+
+**Every PR MUST bump `app.version` in `config.yml` by exactly one patch** (e.g.
+`1.7.18` → `1.7.19`), regardless of change type — feat / fix / refactor / docs all
+do +1 patch. This is the project's mandatory "semantic up"; the immutable build
+that gets promoted `main → DEV → UAT → PRD` is identified by this version, so a PR
+without a bump ships the same version twice. `config.yaml` keeps a placeholder
+(e.g. `v1.0.0`) and is NOT bumped — only `config.yml` carries the live version.
+
+```bash
+# The PR MUST change app.version in config.yml — one patch above main's current value
+git diff origin/main...pr-<N> -- config.yml | grep -E '^\+\s*version:'
+# Cross-check the base so the bump isn't stale after a rebase/merge:
+git show origin/main:config.yml | grep -E '^\s*version:'
+```
+
+Flag as ❌ when:
+- **No bump**: `app.version` unchanged in the PR → require a +1 patch bump.
+- **Stale / wrong increment**: the new value is not exactly one patch above
+  `origin/main`'s current `app.version` (common after a rebase or a main merge —
+  the version conflict must resolve to `main` + 1, not the branch's old number).
+- **Bumped the wrong file**: `config.yaml` changed instead of `config.yml`.
 
 ---
 
@@ -728,23 +809,27 @@ should provide evidence or the reviewer should re-check in a follow-up.
 
 ---
 
-## Reporting — Markdown output file
+## Reporting — Markdown output file (in a MACHINE temp dir, never the repo)
 
-The final report MUST be written to a **temporary `.md` file** so the user can open it
-and copy-paste the contents directly into a GitHub PR comment. The file naming convention:
+The final report MUST be written to a `.md` file so the user can open it and
+copy-paste the contents into a GitHub PR comment. **The file goes in a temporary
+directory ON THE MACHINE — NEVER inside the reviewed repository** (not `docs/reviews/`,
+not anywhere under the repo working tree), so it can never be accidentally committed
+and never pollutes the repo's git status.
 
-```
-docs/reviews/pr-{PR_NUMBER}-review.md
-```
+Target path (in order of preference):
+1. The session **scratchpad** directory if one is provided in the environment
+   (e.g. `.../scratchpad/pr-{PR_NUMBER}-review.md`) — preferred.
+2. Otherwise the OS temp dir: `${TMPDIR:-/tmp}/pr-{PR_NUMBER}-review.md`.
 
 **Steps**:
-1. Create the `docs/reviews/` directory if it doesn't exist
-2. Write the full GFM report to `docs/reviews/pr-{PR_NUMBER}-review.md`
-3. Tell the user the file path so they can open and copy
-4. The file is NOT meant to be committed — it's a working artifact for copy-paste
+1. Resolve the temp dir (scratchpad if available, else `$TMPDIR`/`/tmp`).
+2. Write the full GFM report to `<tempdir>/pr-{PR_NUMBER}-review.md`.
+3. Tell the user the absolute file path so they can open and copy it.
 
-**IMPORTANT**: The `docs/reviews/` folder should be in `.gitignore`. If it's not,
-remind the user to add it (or at minimum, never commit review files).
+**Never** write review files inside the reviewed repo, and never `git add`/commit
+them. (This is distinct from PR *description* text, which is delivered inline in
+chat — see the user's PR-format preference.)
 
 The report language depends on the `LANG` parameter:
 
@@ -820,6 +905,8 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Cableado de módulo | ✅/N/A | |
 | Patrones de BD | ✅/N/A | |
 | Entity/Row mapping | ✅/N/A | |
+| Construcción queries (builder+Entity vs const) | ✅/❌/N/A | |
+| Sin andamiaje muerto (Entity[T] usado) | ✅/❌/N/A | |
 | Ubicación archivos/structs | ✅/N/A | |
 | Patrones handler | ✅/N/A | |
 | Llamadas externas httpclient | ✅/N/A | |
@@ -827,6 +914,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Sin código duplicado | ✅/❌ | |
 | Nombres y convenciones | ✅/❌ | |
 | Config completa | ✅/N/A | |
+| Version bump en config.yml (+1 patch) | ✅/❌ | |
 | **Bugs & code smells** | | |
 | Manejo de errores | ✅/❌/⚠️ | |
 | Sin bugs de concurrencia | ✅/N/A | |
@@ -907,6 +995,8 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Module wiring | ✅/N/A | |
 | DB patterns | ✅/N/A | |
 | Entity/Row mapping | ✅/N/A | |
+| Query construction (builder+Entity vs const) | ✅/❌/N/A | |
+| No dead scaffolding (Entity[T] used) | ✅/❌/N/A | |
 | File/struct placement | ✅/N/A | |
 | Handler patterns | ✅/N/A | |
 | External calls httpclient | ✅/N/A | |
@@ -914,6 +1004,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | No duplicate code | ✅/❌ | |
 | Naming & conventions | ✅/❌ | |
 | Config complete | ✅/N/A | |
+| Version bump in config.yml (+1 patch) | ✅/❌ | |
 | **Bugs & code smells** | | |
 | Error handling | ✅/❌/⚠️ | |
 | No concurrency bugs | ✅/N/A | |
