@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.3.0"
+  version: "2.4.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -1848,25 +1848,28 @@ File name: `pr-{PR_NUMBER}-review.md` (review) or `scan-{path-slug}-audit.md` (s
 
 When running `/go-dev-technical scan <path>`, follow this order:
 
-### Step 0 — Sync `main` before scanning (MANDATORY)
+### Step 0 — Check out `main` before scanning (MANDATORY)
 
-**Always audit against the latest `main`** — a scan of a stale checkout reports
-findings already fixed upstream and misses ones just merged. Bring `main` up to date
-first, every time, before any grep runs:
+**The scan runs on `main`, never on a feature branch.** Checking out the latest
+`main` is a required precondition, not an option — a scan of a stale or feature
+checkout reports findings already fixed upstream and misses ones just merged. Do
+this first, every time, before any grep runs:
 
 ```bash
 git fetch origin
 git checkout main
 git pull --ff-only origin main
+git rev-parse --short HEAD    # record the audited commit for the report header
 ```
 
-**Guard the user's work-in-progress.** Never blow away uncommitted changes to run
-the scan:
+This is the default and expected path: whenever the working tree is **clean**,
+switch to `main` and pull — even if the user is currently on a feature branch (a
+clean checkout is restored trivially with `git checkout -`).
 
-- If the working tree is **clean** → check out and pull `main` as above, scan, done.
-- If the working tree is **dirty** (or the user is mid-feature and must stay on their
-  branch) → do NOT switch branches. Instead scan the latest `main` in an isolated
-  worktree, exactly like the review flow (Step 0.1):
+**Only exception — a dirty working tree.** If (and only if) there are uncommitted
+changes that a checkout would clobber, do NOT switch branches. Instead check out the
+latest `main` in an isolated worktree, exactly like the review flow (Step 0.1), and
+run the scan there:
   ```bash
   git fetch origin
   WT="<scratchpad>/scan-main"
