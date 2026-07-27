@@ -1,10 +1,10 @@
 ---
 name: go-pr-review
-description: "Go PR review for go-bricks services — extends the standard NKH1 pr-review with go-bricks framework validation, reuse checks, and layer discipline. Catches reinvented types, raw DB/HTTP usage, wrong layer boundaries, and missing go-bricks patterns. Usage: /go-pr-review <PR_URL>"
+description: "Go PR review for go-bricks services — extends the standard NKH1 pr-review with go-bricks framework validation, reuse checks, and layer discipline. Catches reinvented types, raw DB/HTTP usage, wrong layer boundaries, SQL injection risks (rawQuery), error handling bugs, resource leaks, concurrency bugs, and missing go-bricks patterns. Usage: /go-pr-review <PR_URL> [LANG] for PR review, /go-pr-review scan <path> [LANG] for anti-pattern scan"
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.8.1"
+  version: "1.9.0"
   domain: review
   triggers: go-pr-review, go pr review, review go pr, go-bricks review
   role: specialist
@@ -20,9 +20,13 @@ Run BOTH — NKH1 first, then go-bricks checks.
 
 ## Usage
 
-```
-/go-pr-review <PR_URL> [LANG]
-```
+### Subcommands
+
+This skill supports two subcommands:
+
+#### 1. `/go-pr-review <PR_URL> [LANG]` — Full PR review
+
+Reviews a GitHub pull request for go-bricks compliance, security, and code quality.
 
 - `LANG` is an optional ISO language code: `EN`, `ES`, `PT`, etc.
 - **Default language is Spanish (`ES`)** — if no `LANG` is provided, the entire
@@ -41,6 +45,34 @@ The `<PR_URL>` is the GitHub pull request URL. The skill will:
 2. Run NKH1 standard review
 3. Run go-bricks validation checks
 4. Report combined findings in the requested language
+
+#### 2. `/go-pr-review scan <path> [LANG]` — Anti-pattern scan
+
+Scans a local codebase for anti-patterns that can be replaced with go-bricks patterns.
+
+- `path` is the local directory to scan (absolute or relative path)
+- `LANG` is an optional ISO language code: `EN`, `ES`, `PT`, etc. (default: `ES`)
+- Performs anti-pattern checks:
+  - **Raw DB usage**: `sql.DB`, `sql.Open`, `sql.Conn` → should use `database.Interface`
+  - **Raw HTTP client**: `http.Client`, `http.Get`, `http.Post` → should use `httpclient.Client`
+  - **Raw echo context**: `echo.Context` in handlers → should use `server.HandlerContext`
+  - **Raw logging**: `log.Printf`, `fmt.Printf` → should use `logger.Logger`
+  - **Raw JSON response**: `c.JSON`, `c.String` → should use `server.NewResult`
+  - **SQL string formatting**: `fmt.Sprintf` with SQL → SQL injection risk, use QueryBuilder
+  - **Layer boundary violations**: service importing server, handler importing database
+  - **Error handling bugs**: ignored errors, lost error chain, shadowed err
+  - **Resource leaks**: unclosed HTTP bodies, SQL rows, file handles
+  - **Concurrency bugs**: goroutines without context, shared state without mutex
+
+Examples:
+- `/go-pr-review scan internal/modules/accounts` → scan accounts module for anti-patterns, report in **Spanish**
+- `/go-pr-review scan . EN` → scan entire project for anti-patterns, report in **English**
+
+The scan will:
+1. Search for anti-patterns in the specified path using grep patterns
+2. Report findings with file:line evidence
+3. Suggest migration to go-bricks patterns where applicable
+4. Categorize findings by severity (BLOCKER / SHOULD-FIX)
 
 ## How to get the diff (MANDATORY — never guess the branch)
 
@@ -261,6 +293,84 @@ grep -rn "type Mock.*Rows\|type mock.*Rows\|type fake.*Rows" <changed-files> --i
 All must return **0 matches** (except legitimate type assertions in tests).
 
 **Finding format**: "Raw `X` used — replace with go-bricks `Y`" → BLOCKER.
+
+### 1b. No rawQuery / SQL string formatting (BLOCKER)
+
+**CRITICAL SECURITY RISK**: Using `fmt.Sprintf` or string concatenation to build SQL queries
+creates SQL injection vulnerabilities. This is a well-documented security anti-pattern.
+
+**Why rawQuery is dangerous:**
+- User input concatenated into SQL string becomes executable code
+- Bypasses prepared statement protection
+- Enables attacks like: `' OR '1'='1' --` (bypass auth), `'; DROP TABLE users; --` (data destruction)
+- OWASP Top 10 vulnerability (CWE-89) — still causing breaches in 2026
+- Go official docs explicitly warn against this pattern
+
+**What to flag:**
+```bash
+# String formatting into SQL (SQL injection risk)
+grep -rn "fmt\.Sprintf.*SELECT\|fmt\.Sprintf.*INSERT\|fmt\.Sprintf.*UPDATE\|fmt\.Sprintf.*DELETE" <changed-files> --include="*.go" | grep -v _test.go
+
+# String concatenation into SQL
+grep -rn "query.*=.*\".*SELECT.*\".*+\|query.*=.*\".*INSERT.*\".*+" <changed-files> --include="*.go" | grep -v _test.go
+
+# Direct Query/Exec with interpolated values (no placeholders)
+grep -rn "\.Query(\|\.Exec(\|\.QueryContext(\|\.ExecContext(" <changed-files>/repository/ --include="*.go" | grep -v _test.go
+# Then manually verify: if the first arg is a string with %s/%d or + concatenation → BLOCKER
+```
+
+**Finding format**: "SQL string formatting detected — SQL injection risk. Use go-bricks QueryBuilder or placeholders" → BLOCKER.
+
+**Correct patterns:**
+
+**BAD (SQL injection vulnerable):**
+```go
+// SECURITY RISK!
+query := fmt.Sprintf("SELECT * FROM users WHERE id = %s", userID)
+rows, err := db.Query(query)
+
+// SECURITY RISK!
+query := "SELECT * FROM users WHERE name = '" + userName + "'"
+rows, err := db.Query(query)
+```
+
+**GOOD (safe with go-bricks QueryBuilder):**
+```go
+qb := database.NewQueryBuilder(db.DatabaseType())
+f := qb.Filter()
+
+sql, args, _ := qb.Select("id", "name", "email").
+    From("users").
+    Where(f.Eq("id", userID)).
+    ToSQL()
+
+rows, err := db.Query(ctx, sql, args...)
+```
+
+**GOOD (safe with placeholders):**
+```go
+// Oracle uses :1, :2
+rows, err := db.Query(ctx, "SELECT * FROM users WHERE id = :1", userID)
+
+// PostgreSQL uses $1, $2
+rows, err := db.Query(ctx, "SELECT * FROM users WHERE id = $1", userID)
+
+// MySQL uses ?
+rows, err := db.Query(ctx, "SELECT * FROM users WHERE id = ?", userID)
+```
+
+**go-bricks QueryBuilder advantages:**
+- Type-safe: compile-time validation of column names
+- Vendor-aware: auto-handles placeholder differences (`:1` vs `$1` vs `?`)
+- Reserved word quoting: Oracle keywords like `NUMBER`, `DATE` auto-quoted
+- Composable: Filter API for WHERE, JOIN, ORDER BY, pagination
+- No string formatting: values passed as separate args, never interpolated
+
+**Exception**: Raw SQL `const` is acceptable ONLY for:
+- Set operations without builder support (`UNION [ALL]`, recursive CTE)
+- Vendor-specific PL/SQL blocks
+- Complex expressions the builder cannot emit
+- MUST document WHY in a comment above the const
 
 ### 2. Layer boundaries (BLOCKER)
 
