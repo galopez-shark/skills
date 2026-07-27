@@ -1,12 +1,12 @@
 ---
 name: go-dev-technical
-description: "Go technical quality for go-bricks services — two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] for PR review with go-bricks validation, rawQuery/SQL safety, reuse checks, and layer discipline; (2) /go-dev-technical scan <path> [LANG] for project-wide anti-pattern scan, unused go-bricks features, and rawQuery audit. Catches reinvented types, raw DB/HTTP usage, wrong layer boundaries, SQL injection risks (Raw/Expr/fmt.Sprintf), error handling bugs, resource leaks, concurrency bugs, and missing go-bricks patterns."
+description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main). Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, and stuttering/noise-word/misleading identifiers."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.0.0"
+  version: "2.3.0"
   domain: review
-  triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan
+  triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
   scope: code-review
   output-format: report
@@ -49,7 +49,10 @@ The `<PR_URL>` is the GitHub pull request URL. The skill will:
 
 #### 2. `/go-dev-technical scan <path> [LANG]` — Project anti-pattern & go-bricks audit
 
-Scans a local codebase for anti-patterns, rawQuery safety issues, and unused go-bricks features.
+Scans a local codebase for anti-patterns, rawQuery safety issues, and unused go-bricks
+features, and produces a **phased remediation roadmap** (Step 6) sized to the project's
+merge constraints — ≤400 new lines and ≤10 files per phase, one branch per phase from
+`main`, same discipline as `/migrate`.
 
 - `path` is the local directory to scan (absolute or relative path)
 - `LANG` is an optional ISO language code: `EN`, `ES`, `PT`, etc. (default: `ES`)
@@ -98,25 +101,58 @@ The scan will:
 #### 3. `/go-dev-technical help` — Help card
 
 ```text
-go-dev-technical — Technical quality for Go go-bricks services.
+go-dev-technical — Validador tecnico para servicios Go sobre go-bricks.
+Objetivo: que no llegue a produccion una integracion rota (HTTP o bus) ni un
+nombre que mienta sobre lo que hace.
 
-SUBCOMMANDS
+SUBCOMANDOS
   /go-dev-technical review <PR_URL> [LANG]
-      Full PR review: NKH1 standard + go-bricks validation + rawQuery safety + bug hunting.
-      Default language: Spanish (ES). Pass EN for English.
+      Revision completa de un PR. Idioma por defecto: ES (pasar EN para ingles).
+      Fase 0  Base de evidencia   build + vet + test -cover + golangci-lint + go fix
+                                  worktree aislado, comparado contra origin/main
+      Fase 1  NKH1                tamano, titulo, PCI/secretos, bump de version
+      Fase 2  go-bricks           tipos reinventados, SQL safety, capas, BUS,
+                                  patrones DB/handler, reuso, ubicacion de archivos
+      Fase 3  Correctitud         errores, concurrencia+tiempo, leaks, fail-closed,
+                                  calidad de tests, NOMBRES, firmas, modernizacion
+      Fase 4  Descubrimiento      que ofrece go-bricks que el PR no esta usando
+      Fase 5  Scope y evidencia   un solo concern, todo hallazgo con file:line
+      Salida: <tmp>/pr-<N>-review.md  (markdown pegable en el PR)
 
   /go-dev-technical scan <path> [LANG]
-      Project-wide audit: rawQuery safety, unused go-bricks features, anti-patterns, layer
-      violations, error handling bugs, resource leaks. Reports with file:line evidence.
+      Auditoria del codigo existente + ROADMAP de remediacion ejecutable.
+      SIEMPRE baja main primero (fetch + checkout/pull, o worktree si hay WIP)
+      para auditar contra el ultimo main; reporta el commit de main auditado.
+      Mismos checks que review, sin lo especifico de PR, mas:
+        - tabla de auditoria rawQuery (safe / migrable / BLOCKER)
+        - features de go-bricks sin usar, con donde aplicarlas
+        - roadmap por fases: <=400 lineas y <=10 files por fase, una rama por
+          fase desde main, prioridad P0..P4, dependencias y diferidos
+      Salida: <tmp>/scan-<path>-audit.md
 
   /go-dev-technical help
-      This help card.
+      Esta tarjeta.
 
-KEY RULES
-  - go-bricks is always the priority: if the framework provides it, use it.
-  - rawQuery/Raw()/Expr() are escape hatches, not defaults — flag every usage.
-  - SQL safety is a BLOCKER: fmt.Sprintf+SQL, string concat+SQL, Raw() without params.
-  - All findings must have file:line evidence and concrete failure scenario.
+QUE ATRAPA (los que duelen)
+  BUS       nombre de exchange/queue/routing-key/EventType que no matchea con la
+            contraparte: publica ok, no enruta, nadie recibe, NO hay error.
+            AutoAck, sin DLQ, sin idempotencia (inbox), dual-write sin outbox.
+  SQL       fmt.Sprintf/concat en SQL, Raw()/Expr() sin parametrizar, identificadores
+            dinamicos sin allowlist.
+  NOMBRES   no solo marca el mal nombre: PROPONE el reemplazo en una tabla
+            Actual -> Propuesto -> Razon. Sin propuesta no es hallazgo.
+  RUNTIME   errores tragados, %s en vez de %w, goroutine leaks, resource leaks,
+            fail-open, tests tautologicos, ramas de error sin cubrir.
+  CAPAS     service que importa server, handler que toca database, net/http o
+            sql.DB crudos en vez de go-bricks.
+
+REGLAS DURAS
+  - Fase 0 SIEMPRE: no se opina sobre un diff sin compilarlo y correrle los tests.
+  - go-bricks manda: si el framework lo provee, se usa.
+  - Todo hallazgo lleva file:line + escenario de fallo concreto + fix.
+  - Lo que no se pudo verificar es (warn) NO VERIFICADO, nunca (ok).
+  - Paridad legacy gana sobre estetica: un nombre que replica el contrato Java
+    se respeta y se documenta, no se reporta.
 ```
 
 ## How to get the diff (MANDATORY — never guess the branch)
@@ -169,14 +205,24 @@ Antes de empezar, rechazar estos atajos mentales:
 | "Los tests pasan, está bien" | Los tests pueden ser tautológicos o cubrir solo el happy path | Verificar que los tests fallarían sin el cambio |
 | "Conozco este codebase" | La familiaridad crea puntos ciegos | Seguir el checklist de todas formas |
 | "El autor es experimentado" | Revisar el código, no la reputación | Aplicar los mismos criterios siempre |
+| "Con leer el diff alcanza" | El diff no compila, no corre tests y no mide cobertura | Phase 0 SIEMPRE: build + vet + test + lint antes de opinar |
+| "El lint pasa" | `golangci-lint` cachea entre worktrees y reporta rutas que ya no existen | `golangci-lint cache clean` y comparar contra `origin/main` |
+| "Tiene 95% de cobertura" | El % no dice QUÉ rama falta, y suele faltar la de error | `go tool cover -func` + bloques con 0 hits |
+| "`gh` falló, salto ese check" | Un check no verificable es ⚠️, nunca ✅ | Fallback a `git log` y marcar ⚠️ con la razón |
+| "El nombre es cuestión de gusto" | Un nombre equivocado propaga un modelo mental equivocado | Google Go Style Guide es el árbitro, no la preferencia |
 
 ---
 
 ## Review order
 
+### Phase 0 — Build the evidence base (MANDATORY, run FIRST)
+
+Do not read the diff and reason about it. **Run the toolchain and let it tell you
+what is broken** — then reason about what the toolchain cannot see. See
+"Phase 0 — Evidence base" below for the exact commands.
+
 ### Phase 1 — NKH1 standard (common:pr-review)
 
-Run the full NKH1 review first:
 1. **Sizing**: ≤400 LOC, ≤10 files, one problem per PR
 2. **Title**: Conventional Commit, ≤72 chars, no Jira ID in title
 3. **Security & PCI**: no secrets, PAN, CVV in code/logs/tests; tenant isolation
@@ -185,128 +231,141 @@ Run the full NKH1 review first:
 6. **Tests**: ≥70% coverage on changed code, error paths covered
 7. **Style**: defer to linters (golangci-lint, gofmt, staticcheck)
 
-### Phase 2 — Bug hunting & code smells (Go-specific)
+### Phase 2 — go-bricks validation (checks 1-10)
 
-Analyze the diff for common Go bugs and code smells. These are correctness
-issues that linters often miss. Run BEFORE go-bricks checks.
+Anti-patterns: the PR must not reinvent go-bricks types, break layer boundaries,
+or escape the QueryBuilder unsafely.
 
-### Phase 3 — go-bricks validation (this skill adds)
+### Phase 3 — Correctness, runtime & naming (checks 9, 11-16)
 
-Two sub-phases:
-- **3a — Anti-patterns**: check that the PR doesn't reinvent go-bricks types
-  or break layer boundaries (blockers).
-- **3b — Discovery**: actively explore go-bricks source to find utilities,
-  helpers, or patterns that the PR COULD be using but isn't. This is not about
-  blocking — it's about leveraging go-bricks' full potential.
+Correctness bugs and code smells linters miss, plus API/naming design.
 
-### Phase 4 — Scope & evidence verification
+### Phase 4 — go-bricks discovery
 
-After all checks, verify scope containment and evidence quality.
+Actively explore go-bricks source for utilities the PR COULD use but doesn't.
+Not about blocking — about leveraging the framework's full potential.
 
----
+### Phase 5 — Scope & evidence verification (checks 17-18)
 
-## Bug hunting & code smells (Phase 2)
+### Check index
 
-These checks target correctness bugs and code smells that linters often miss.
-Every finding MUST cite file:line and a concrete failure scenario.
-
-**Developer-explicit findings**: When reporting bugs and should-fix items, write
-them as a developer would explain to another developer in a PR comment. Include:
-- The exact code that's wrong (quote the line)
-- What happens at runtime (e.g., "this panics with nil pointer dereference when...")
-- The fix as a concrete code diff (before → after)
-- Why the fix is correct (e.g., "because `%w` preserves the error chain for `errors.Is()`")
-
-Bad: "Error handling could be improved"
-Good: "`sql_repository.go:45` — `fmt.Errorf("failed: %s", err)` loses the error
-chain. Callers using `errors.Is(err, ErrNotFound)` will get `false` because `%s`
-stringifies instead of wrapping. Fix: `fmt.Errorf("failed: %w", err)`"
-
-### 11. Error handling bugs (BLOCKER)
-
-```bash
-# Ignored errors — the returned error is assigned to _ or not checked
-grep -n "_ = .*\.\(Do\|Query\|Exec\|Close\|Scan\|Decode\|Unmarshal\)" <changed-files> --include="*.go" | grep -v _test.go
-
-# Error checked but original error lost (wrapped without %w)
-grep -n 'fmt\.Errorf.*[^%]"' <changed-files> --include="*.go" | grep -v "%w" | grep -v _test.go
-
-# Shadowed err in nested scope (re-declares err with := inside an if/for that already has err)
-# Manual inspection: look for `err :=` inside a block that has an outer `err`
-```
-
-Flag:
-- **Swallowed errors**: `_ = rows.Close()` — an error during Close can mask data loss
-- **Lost error chain**: `fmt.Errorf("failed: %s", err)` instead of `%w` — breaks `errors.Is/As`
-- **Shadowed err**: inner `:=` silently discards outer err; use `=` instead
-- **Nil pointer after error check**: `if err != nil { ... }` followed by using the value without checking `nil`
-- **Deferred Close without error check**: `defer resp.Body.Close()` — should check or log the error
-
-### 12. Concurrency bugs (BLOCKER)
-
-```bash
-# Goroutine leaks — goroutine started without cancellation path
-grep -n "go func\|go .*(" <changed-files> --include="*.go" | grep -v _test.go
-
-# Missing mutex for shared state
-grep -n "sync\.Mutex\|sync\.RWMutex" <changed-files> --include="*.go"
-```
-
-Flag:
-- **Goroutine without context**: `go func()` that doesn't receive `ctx` or a done channel
-- **Shared state without sync**: struct fields accessed from multiple goroutines without mutex
-- **Channel not closed**: producer goroutine that never closes the channel (consumer blocks forever)
-- **Race-prone map**: concurrent `map` read/write without `sync.Mutex` or `sync.Map`
-
-### 13. Resource leaks (BLOCKER)
-
-```bash
-# HTTP response body not closed
-grep -n "\.Do(\|\.Get(\|\.Post(" <changed-files> --include="*.go" | grep -v _test.go
-# Then verify each has a defer res.Body.Close() nearby
-
-# SQL rows not closed
-grep -n "\.Query\|\.QueryRow\|\.QueryContext" <changed-files> --include="*.go" | grep -v _test.go
-# Then verify each has defer rows.Close()
-
-# File handles not closed
-grep -n "os\.Open\|os\.Create" <changed-files> --include="*.go" | grep -v _test.go
-```
-
-Flag:
-- **Response body leak**: `http.Do()` result without `defer res.Body.Close()`
-- **SQL rows leak**: `db.Query()` without `defer rows.Close()`
-- **File handle leak**: `os.Open()` without `defer f.Close()`
-
-### 14. Fail-closed validation (SHOULD-FIX)
-
-When an operation fails (network timeout, parse failure, API error), the code
-must deny/fail safely, not silently proceed with stale or empty data.
-
-Flag:
-- **Silent fallback**: catch block returns empty/default data instead of propagating the error
-- **Missing validation on external response**: external API response parsed without checking status
-- **Stale cache on error**: cache miss + fetch error → returns stale value without logging
-
-### 15. Test quality (SHOULD-FIX)
-
-Go beyond "tests exist" — verify tests are meaningful:
-
-- [ ] **Regression value**: would the test FAIL if the production code it targets were removed?
-- [ ] **No mock-only assertions**: test asserts on real behavior, not just that a mock was called
-- [ ] **Error paths covered**: not just happy path — test what happens when the DB is down, API returns 500, input is malformed
-- [ ] **No tautological assertions**: `assert.Equal(t, result, result)` or asserting the mock's return value
-- [ ] **Complete mocks**: mock objects mirror the full shape of the real object, not just the fields the author expected
-- [ ] **No weakened assertions**: existing assertions not removed or relaxed to make tests pass
-
-```bash
-# Check if tests were weakened — removed assertions
-git diff origin/main...pr-<N> -- "*_test.go" | grep "^-.*assert\|^-.*require" | grep -v "^---"
-```
+| # | Check | Phase | Severity |
+|---|-------|:-----:|----------|
+| 1 | No reinvented types | 2 | BLOCKER |
+| 1b | rawQuery / SQL safety | 2 | BLOCKER |
+| 2 | Layer boundaries | 2 | BLOCKER |
+| 3 | Module wiring | 2 | SHOULD-FIX |
+| 4 / 4b / 4c / 4d | DB patterns, Entity/Row mapping, query construction, dead scaffolding | 2 | SHOULD-FIX |
+| 5 | HTTP/handler patterns | 2 | SHOULD-FIX |
+| 6 | External calls | 2 | SHOULD-FIX |
+| 6b | Messaging / bus integration | 2 | BLOCKER |
+| 7 | Test patterns | 2 | SHOULD-FIX |
+| 8 / 8b | Reuse check, file & struct placement | 2 | SHOULD-FIX |
+| 9 / 9b | Naming & API design, signature design | 3 | SHOULD-FIX |
+| 10 / 10b | Config completeness, version bump | 2 | NIT / SHOULD-FIX |
+| 11 | Error handling bugs | 3 | BLOCKER |
+| 12 | Concurrency & time bugs | 3 | BLOCKER |
+| 13 | Resource leaks | 3 | BLOCKER |
+| 14 | Fail-closed validation | 3 | SHOULD-FIX |
+| 15 | Test quality | 3 | SHOULD-FIX |
+| 16 | Modernization (`go fix`) | 3 | NIT |
+| 17 | Scope containment | 5 | SHOULD-FIX |
+| 18 | Evidence-based findings | 5 | MANDATORY |
 
 ---
 
-## go-bricks checks
+## Phase 0 — Evidence base (MANDATORY)
+
+A review that only reads the diff reports what the reviewer *imagines* the code
+does. Compile it, run it, measure it — **then** review what the tools can't see.
+Findings produced this way carry a reproducible command, which is what makes them
+survive an argument with the author.
+
+### Step 0.1 — Isolated worktree (never dirty the user's checkout)
+
+The user may have work in progress. Never `git checkout` the PR branch in their
+working directory. Use a detached worktree in the scratchpad:
+
+```bash
+WT="<scratchpad>/pr<N>"
+git worktree add --detach "$WT" pr-<N>
+cd "$WT"
+```
+
+**Always remove it when done** (from the repo root, not from inside the worktree —
+deleting your own CWD breaks the shell):
+
+```bash
+cd <repo-root> && git worktree remove --force "$WT" && git worktree prune
+```
+
+### Step 0.2 — Run the toolchain
+
+```bash
+go build ./...                 # must be clean
+go vet ./...                   # must be clean
+go test ./... -cover           # all green + per-package coverage
+golangci-lint run ./...        # the project's own gate (.golangci.yml)
+go fix -diff ./...             # check 16 — modernization, exits non-zero if any
+```
+
+**Compare against the base**, never in absolute terms. A pre-existing lint issue
+is not this PR's fault; an issue the PR *introduces* is. When `golangci-lint`
+reports anything, re-run on `origin/main` to attribute it:
+
+```bash
+golangci-lint cache clean && golangci-lint run ./...
+```
+
+> `golangci-lint` caches across worktrees and will happily report issues against a
+> worktree you already deleted. If paths in the output don't exist, clean the cache
+> and re-run before believing the result.
+
+### Step 0.3 — Per-branch coverage, not per-package
+
+"97.6% coverage" is not a finding. **Which branch is uncovered** is:
+
+```bash
+go test ./<changed-pkg>/... -coverprofile=/tmp/c.out
+go tool cover -func=/tmp/c.out | grep -v "100.0%"     # which functions
+grep -v "^mode" /tmp/c.out | awk '$NF==0'             # exact uncovered blocks: file:startLine.col,endLine.col
+```
+
+Map each uncovered block back to a line and ask: *is this the error path that will
+actually happen in production?* An uncovered transport-failure branch matters more
+than an uncovered getter.
+
+### Step 0.4 — Race detector on concurrent code
+
+If the diff touches goroutines, channels, or shared state:
+
+```bash
+go test ./... -race
+```
+
+### Step 0.5 — When `gh` is unavailable
+
+`gh` frequently lacks repo scope on NovoPayment repos and fails with
+`Could not resolve to a Repository`. That is **not** a reason to skip the PR title
+check — fall back to the commit subjects and mark the check ⚠️:
+
+```bash
+git log origin/main..pr-<N> --oneline
+```
+
+Report it as: *"⚠️ `gh` sin scope de repo — no pude leer el título real; el commit
+`<subject>` son N chars y cumple"*. Never silently claim ✅ on something you
+could not read.
+
+### Phase 0 gate
+
+Report these in the summary table as their own rows. If any command could not be
+run (no toolchain, no network), that row is ⚠️ `NO VERIFICADO` with the reason —
+never ✅.
+
+---
+
+## go-bricks checks (Phase 2 — checks 1-10)
 
 ### 1. No reinvented types (BLOCKER)
 
@@ -446,7 +505,7 @@ rows, err := db.Query(ctx, sql, args...)
 ```
 
 **go-bricks QueryBuilder advantages:**
-- Vendor-aware: auto-handles placeholder differences (`:1` vs `$1` vs `?`)
+- Vendor-aware: auto-handles placeholder differences (Oracle `:1`, Postgres `$1`, MySQL `?`)
 - Reserved word quoting: Oracle keywords like `NUMBER`, `DATE` auto-quoted
 - Composable: Filter, JoinFilter, OrderBy, Paginate, Subquery
 - No string formatting: values passed as separate args, never interpolated
@@ -534,7 +593,7 @@ When the diff touches repository code:
 
 - [ ] Uses `database.Interface` (injected), never creates DB connections
 - [ ] SQL queries in `queries.go` as `const`, not inline strings
-- [ ] Named placeholders for Oracle (`:param_name`), not positional (`$1`)
+- [ ] Named placeholders for Oracle (`:param_name`), not Postgres-style positional (`$1`)
 - [ ] `fixtures.NewMockRows` for test data, not custom mock structs
 - [ ] `mocks.MockDatabase` / `mocks.MockTx` for DB mocks in tests
 - [ ] No `sql.NullString` in domain types — convert at the repository boundary
@@ -755,6 +814,111 @@ When the diff touches HTTP calls to external services:
 - [ ] Response parsed and errors handled (don't ignore non-2xx)
 - [ ] Retry logic delegated to httpclient, not custom loops
 
+### 6b. Messaging / bus integration (BLOCKER)
+
+**This is the check that prevents a broken integration from reaching production.**
+An HTTP contract breaks loudly — a 404, a failing test. A bus contract breaks
+**silently**: a routing key with a typo publishes successfully, the broker routes it
+nowhere, and the consumer simply never receives anything. Nothing fails, nothing
+logs an error, and the bug surfaces days later as missing data.
+
+Apply whenever the diff touches `go-bricks/messaging`, `outbox`, `inbox`, AMQP, or
+declares an exchange / queue / binding / publisher / consumer.
+
+#### 6b.1 Contract names are the integration (BLOCKER)
+
+Exchange names, queue names, routing keys and `EventType` are a **cross-service
+contract**. The compiler does not check them; the broker does not reject them.
+A single wrong character = an integration that never works.
+
+- [ ] **Every name verified character-by-character against the counterpart**, not
+      "it looks right". The counterpart is the producer repo, the consumer repo, the
+      infra declaration, or the legacy service being migrated. Quote the source:
+      ```bash
+      grep -rn "<routing.key>" --include="*.go" --include="*.yml" --include="*.yaml" .
+      grep -rn "RegisterConsumer\|RegisterPublisher\|RegisterBinding" --include="*.go" internal/
+      ```
+      If the counterpart is not in this repo and cannot be read, the check is
+      ⚠️ `NO VERIFICADO` — **never ✅**. Say exactly which name could not be confirmed.
+- [ ] **Names come from a shared constant**, never a string literal at the call site.
+      A literal repeated in publisher and consumer drifts on the first rename
+- [ ] **Naming consistent with the topology already in the repo**: same separator,
+      same casing, same segment order (`domain.entity.action` vs
+      `service_entity_action` — pick the one already in use and never mix)
+- [ ] `EventType` and `Description` are populated on every publisher/consumer
+      declaration — they are the documentation of the topology
+- [ ] `Declarations.Validate()` catches a consumer/publisher/binding pointing at a
+      queue or exchange that was never declared. Verify the module actually declares
+      **all four**: exchange, queue, binding, and the consumer/publisher. A consumer
+      declared without its binding compiles, starts, and receives nothing
+
+#### 6b.2 Delivery guarantees (BLOCKER)
+
+- [ ] **`AutoAck: false`** on any consumer carrying business events. `AutoAck: true`
+      acknowledges on delivery, so a handler that panics or errors **loses the
+      message permanently** — no retry, no DLQ, no trace
+- [ ] **`Durable: true`** on queues and exchanges that carry business events —
+      otherwise a broker restart discards them
+- [ ] **DLQ configured**: `QueueDeclaration.Args` carries `x-dead-letter-exchange`
+      (and its DLX/DLQ are themselves declared). Without it, a poison message either
+      loops forever or vanishes
+- [ ] **No infinite requeue**: a handler that nacks with `requeue=true` on a
+      permanent error (malformed payload, unknown id) re-delivers the same message
+      forever and burns the consumer. Permanent errors go to the DLQ; only transient
+      ones requeue
+- [ ] **Idempotent consumer**: AMQP is **at-least-once**, so redelivery is normal,
+      not exceptional. The handler either wraps in `deps.Inbox.ProcessOnce` (with the
+      id from `outbox.EventIDFromHeaders`) or is provably idempotent by construction.
+      A consumer that inserts a row without an idempotency key WILL duplicate it
+- [ ] **No dual write**: publishing inside a DB transaction that may still roll back
+      (or committing then publishing) loses or invents events on any crash between
+      the two. Use the transactional **outbox** — that is what it is for
+
+#### 6b.3 Payload contract
+
+- [ ] Producer struct and consumer struct agree **field by field, tag by tag**.
+      Compare the JSON tags, not the Go field names
+- [ ] Unknown fields tolerated on the consumer side (forward compatibility): adding
+      a field to the producer must not break existing consumers
+- [ ] A schema change is additive, or the event type is versioned. Renaming or
+      removing a field in place breaks every deployed consumer at once
+- [ ] Payload carries no PAN/CVV/track data (PCI) and no secrets — a queue is
+      persisted storage
+- [ ] The event id used for idempotency travels in a **header**, and both sides read
+      the same header name
+
+#### 6b.4 Consumer runtime
+
+- [ ] Handler receives and honors `ctx` (shutdown must drain, not truncate)
+- [ ] Handler cannot panic out — a panic in a consumer goroutine takes down the
+      process or silently kills the consumer depending on the recovery wiring
+- [ ] `Workers` / `PrefetchCount` are deliberate: `0` means auto (`NumCPU*4`, prefetch
+      `Workers*10` capped at 500). For a handler that writes to a DB with a small
+      pool, auto-scaling to 4×CPU workers exhausts the pool — set both explicitly and
+      say why
+- [ ] Uses go-bricks `messaging` (`Registry` / `Declarations` / `AMQPClient`), never
+      `amqp091-go` directly:
+      ```bash
+      grep -rn "amqp091\|streadway/amqp" --include="*.go" internal/ | grep -v _test.go
+      ```
+
+#### 6b.5 Tests
+
+- [ ] There is a test that pins the **contract**: exchange, routing key, event type
+      and the serialized payload. That test is what catches a rename before the broker
+      silently swallows it
+- [ ] Redelivery is tested: the same message twice produces one effect
+- [ ] The handler's error path is tested (does it DLQ, requeue, or swallow?)
+
+**Report format** — for bus findings, always state the silent-failure scenario
+explicitly, because it is what makes the severity land:
+
+> `[bus]` `module.go:44` — el consumer declara la queue `card.block.v1` pero el
+> binding usa `card.blocked.v1`. Publica correcto, el broker enruta a ninguna cola y
+> el consumer nunca recibe: **no hay error, no hay log, no hay test rojo**. La
+> integración queda muerta en silencio. Fix: constante compartida
+> `QueueCardBlocked = "card.blocked.v1"` usada en la declaración y en el binding.
+
 ### 7. Test patterns (SHOULD-FIX)
 
 - [ ] `mocks.MockDatabase` for repository tests, not a real DB or custom mock
@@ -825,45 +989,219 @@ Flag:
 - **Mapper scattered**: Row → DTO conversion in `sql_repository.go` → extract to `mapper.go`
 - **Error in wrong layer**: error sentinel defined in `repository/` → move to `domain/errors.go`
 
-### 9. Go naming & conventions (SHOULD-FIX)
+### 9. Naming & API design (SHOULD-FIX)
 
-Check all new identifiers against Go and project conventions:
+Naming is not cosmetics — a wrong name is a wrong mental model that every future
+reader inherits. Baseline is the **Google Go Style Guide** (`google.github.io/styleguide/go`),
+which supersedes personal preference. Rules below are the checkable subset.
 
-**Variables & fields:**
-- [ ] camelCase for unexported, PascalCase for exported — no snake_case
-- [ ] Avoid stuttering: `domain.DomainError` → `domain.Error`; `cards.CardsService` → `cards.Service`
-- [ ] Acronyms fully capitalized: `ID` not `Id`, `HTTP` not `Http`, `URL` not `Url`, `SQL` not `Sql`
-- [ ] Boolean vars/fields start with `is`, `has`, `can`, `should` — or are adjectives: `valid`, `active`, `blocked`
-- [ ] Receiver names: 1-2 letter abbreviation of the type (`s` for Service, `r` for Repository, `h` for Handler) — consistent within the file
+#### 9.0 Procedure — enumerate, judge, propose (MANDATORY)
 
-**Functions & methods:**
-- [ ] Exported functions start with a verb: `Get`, `Create`, `Validate`, `Parse`, `Build`
-- [ ] Constructors follow `New{Type}` pattern: `NewService`, `NewRepository`, `NewHandler`
-- [ ] Interface methods describe the action: `FindByID`, `Store`, `Delete` — not `DoFind`, `ProcessStore`
-- [ ] Error-returning functions: last return is `error`, not mixed in the middle
-- [ ] Context is always the first parameter: `func (s *Service) GetCard(ctx context.Context, ...)`
+This check is **not** "read the diff and see if something looks odd". It is a
+sweep: every identifier the PR introduces gets judged, and every bad one leaves
+with a **concrete replacement name**. A finding that says "el nombre es poco
+descriptivo" without proposing the new name is not a finding, it is a complaint.
 
-**Types & interfaces:**
-- [ ] Interfaces named by behavior (suffix `-er`): `Reader`, `Writer`, `Validator` — or by role: `Repository`, `Service`
-- [ ] Single-method interfaces preferred over large ones
-- [ ] Structs named as nouns: `Card`, `Account`, `BlockRequest` — not `CardData`, `AccountInfo`
-- [ ] Error sentinel vars: `Err` prefix → `ErrNotFound`, `ErrInvalidBlockType`
-- [ ] Constants: PascalCase for exported, camelCase for unexported — no `ALL_CAPS` (that's Java/Python)
+**Step 1 — Enumerate every new identifier.** Only added lines (`^+`):
 
-**Package names:**
-- [ ] Short, lowercase, single-word: `domain`, `service`, `handlers` — not `cardService`, `card_handlers`
-- [ ] No underscores, no mixedCaps
-- [ ] Import alias only when two packages collide
+```bash
+D="git diff origin/main...pr-<N> -- *.go"
 
-**Files:**
-- [ ] snake_case for file names: `block_request.go`, `card_service.go` — not `blockRequest.go`
-- [ ] `_test.go` suffix for test files in the same package
-- [ ] One primary type per file preferred (small types can share a file like `dto.go`, `errors.go`)
+# types, funcs, methods, interfaces
+$D | grep "^+" | grep -oE "^\+(type|func) [A-Za-z_][A-Za-z0-9_]*" | sort -u
+$D | grep "^+" | grep -oE "^\+func \([a-z]+ \*?[A-Za-z]+\) [A-Za-z_][A-Za-z0-9_]*" | sort -u
 
-Flag naming violations with a concrete suggestion:
+# struct fields
+$D | grep "^+" | grep -oE "^\+\s+[A-Z][A-Za-z0-9_]*\s+[a-z*\[]" | sort -u
 
-> `[go-bricks]` **Naming**: `cards.CardsService` stutters — rename to `cards.Service`
-> `[go-bricks]` **Naming**: Field `BlockTypeId` should be `BlockTypeID` (Go acronym convention)
+# constants and package-level vars
+$D | grep "^+" | grep -oE "^\+\s*(const|var)?\s*[A-Za-z_][A-Za-z0-9_]*\s*=" | sort -u
+
+# import aliases (must match the rest of the repo — see 9.5)
+$D | grep "^+" | grep -oE '^\+\s+[a-z][a-zA-Z0-9]* "' | sort -u
+```
+
+**Step 2 — Judge each one against 9.1-9.5 and the smell catalog below.**
+
+**Step 3 — For every violation, produce a row** in the rename table (9.6). The
+proposed name must be: intention-revealing, pronounceable, greppable, in the
+project's domain language, and consistent with what the repo already calls that
+concept — check before inventing:
+
+```bash
+grep -rn "<concepto>" internal/ --include="*.go" | head    # ¿cómo se llama ya?
+```
+
+#### 9.0b Smell catalog — what to hunt and what to propose
+
+*"The name should tell you why it exists, what it does, and how it is used. If a
+name requires a comment, the name does not reveal its intent."* (Clean Code, cap. 2)
+
+| Smell | Ejemplo detectado | Propuesta | Por qué |
+|---|---|---|---|
+| **Palabra ruido** (`Data`, `Info`, `Object`, `Value`, `Item`, `Record`) | `CardData`, `AccountInfo` | `Card`, `Account` | `Data` no distingue nada: todo es datos |
+| **Sufijo cajón** (`Manager`, `Processor`, `Helper`, `Util`, `Handler` fuera de HTTP) | `CardManager` | `CardBlocker` / `CardStatusUpdater` | Un `Manager` "gestiona" = no tiene una responsabilidad |
+| **Verbo vacío** (`process`, `handle`, `doX`, `execute`, `perform`) | `processCard()` | `blockCard()`, `formatAmount()` | Nombrar el efecto, no el hecho de que haya código |
+| **Abreviatura no estándar** | `custId`, `blkTp`, `respCd`, `acctNum` | `customerID`, `blockType`, `responseCode`, `accountNumber` | Sólo se abrevian términos universales (`ctx`, `db`, `tx`, `req`, `resp`, `err`, `id`, `url`, `cfg`) |
+| **Nombre desinformativo** | `list` sobre un `map`; `cardList []Card` que trae bines | `byID map[...]`, `binGroups` | Un nombre que miente cuesta más que uno vago |
+| **Serie numérica / ruido diferenciador** | `card1`, `card2`, `cardCopy`, `cardTmp` | `source`, `updated` / nombres por rol | Si dos nombres deben diferir, deben *significar* distinto |
+| **Tipo en el nombre** | `cardSlice`, `errString`, `idToNameMap` | `cards`, `reason`, `namesByID` | El tipo ya lo dice el compilador |
+| **Booleano negado o ambiguo** | `notFound`, `disabled`, `flag` | `found`, `enabled`, `skipUsernameLookup` | `!notFound` obliga a doble negación mental |
+| **Constante que se nombra a sí misma** | `PB = "PB"`, `Code40 = "-40"` | `BlockTypeTemporary`, `ErrCodeAccountNotFound` | La constante debe decir qué *denota*, no qué *vale* |
+| **Genérico de un solo uso** | `result`, `res`, `out`, `temp` en scope de 20+ líneas | `balances`, `issuance`, `formatted` | Largo proporcional al scope (9.1) |
+| **Inconsistencia de léxico** | `Fetch…`, `Get…`, `Retrieve…` para lo mismo | elegir UNO por repo | *"Un lexicón consistente es un gran beneficio"* |
+| **Stuttering** | `cards.CardsService`, `connector.ConnectorClient` | `cards.Service`, `connector.Client` | El paquete es la mitad del identificador |
+| **Acrónimo mal capitalizado** | `CardId`, `HttpClient`, `panHash`→`PanHash` | `CardID`, `HTTPClient`, `PANHash` | Convención de Go, no opinión |
+
+**Excepción que manda sobre todas**: en una migración, un nombre que replica el
+contrato legacy (`GetCardDetail`, `holdResponseCode`, `pvki`, `rc`) **se respeta**
+aunque viole el catálogo — la paridad vale más que la estética. Cuando detectes
+uno, no lo reportes como hallazgo: menciónalo como decisión verificada.
+
+#### 9.1 The two rules that decide most arguments
+
+1. **Name length is proportional to scope.** *"The length of a name should be
+   proportional to the size of its scope and inversely proportional to the number
+   of times it is used within that scope."* A 3-line closure may use `c`; a
+   package-level var may not. Conversely, `customerIdentifierValue` inside a
+   5-line loop is noise.
+
+   | Scope | Acceptable |
+   |---|---|
+   | 1-7 lines | single letters (`i`, `r`, `w`, `c`, `tt`) |
+   | 8-15 lines | short words (`card`, `row`, `resp`) |
+   | 15+ lines / package-level | full descriptive names |
+
+2. **Omit what context already says.** Inside package `cards`, a type is `Service`,
+   not `CardsService`; a method on `Card` returns `count`, not `cardCount`. The
+   caller reads `cards.Service` — the package name is half the identifier.
+
+#### 9.2 Variables & fields
+
+- [ ] camelCase unexported / PascalCase exported — **never** snake_case, never `ALL_CAPS`
+- [ ] Initialisms keep uniform case: `ID`, `URL`, `HTTP`, `SQL`, `API`, `RC`, `PAN` —
+      `cardID` / `CardID`, never `cardId` / `CardId`
+- [ ] No stuttering: `domain.DomainError` → `domain.Error`; `cards.CardsService` → `cards.Service`
+- [ ] No type-in-name: `users` not `userSlice`; `byID` not `idToUserMap`
+- [ ] Booleans read as assertions: `isActive`, `hasBalance`, `canBlock`, `shouldRetry`,
+      or bare adjectives (`valid`, `blocked`). Never negated names — `notReady`
+      forces the reader to parse `!notReady`
+- [ ] No underscores, except in `_test.go` function names
+- [ ] Receiver: 1-2 letters abbreviating the type, **identical across every method
+      of that type** (`s` Service, `r` Repository, `h` Handler, `c` Client). Never
+      `self`, `this`, or `_` with a body that uses it
+
+#### 9.3 Functions & methods
+
+- [ ] **No `Get` prefix** on accessors: *"Prefer starting the name with the noun
+      directly"* — `Balance()` not `GetBalance()`. **Exception**: the underlying
+      concept is a get (HTTP GET, `GetCardDetail` mirroring a legacy endpoint,
+      SQL `GET_BLOCK_TYPE_BY_ID`). In a migration, legacy-parity names WIN — say so
+      in the review instead of flagging them
+- [ ] Mutating/acting functions start with a verb: `Create`, `Validate`, `Parse`, `Build`, `Resolve`
+- [ ] Constructors are `New{Type}` — `NewService`; in a single-type package just `New`
+- [ ] Interface methods name the action, not the plumbing: `FindByID`, `Store` —
+      not `DoFind`, `ProcessStore`, `HandleStore`
+- [ ] Test names: `TestXxx`, subtests describe the *case*, not the number —
+      `t.Run("missing tenant", …)` not `t.Run("case3", …)`
+
+#### 9.4 Types, interfaces & errors
+
+- [ ] Interfaces by behavior (`-er`: `Reader`, `Validator`, `CardUpdater`) or by
+      role (`Repository`, `Service`). Small interfaces beat large ones
+- [ ] **Interfaces are declared by the consumer**, not shipped with the
+      implementation — the package that *calls* defines what it needs
+- [ ] Structs are nouns: `Card`, `BlockRequest` — not `CardData`, `AccountInfo`,
+      `CardManager` (a `Manager` suffix usually means the type has no single job)
+- [ ] Error sentinels: `Err` prefix (`ErrNotFound`); error *types*: `Error` suffix
+      (`AppError`, `ValidationError`)
+- [ ] Constants explain what the value **denotes**, not what it **is**:
+      `BlockTypeTemporary = "PB"` ✅ — `PB = "PB"` or `StringPB` ❌
+
+#### 9.5 Packages & files
+
+- [ ] Package name: short, lowercase, one word, no underscores, no mixedCaps
+- [ ] **Banned package names**: `util`, `utils`, `common`, `helpers`, `misc`, `shared`,
+      `base` — they attract unrelated code and force import aliases. A package named
+      after what it *is for* (`connector`, `apperrors`, `external`) stays coherent.
+      Same rule for files: a `helpers.go` becomes a junk drawer — name it after its
+      one type (`handler.go`, `response.go`)
+- [ ] Package name is not repeated by its contents (`connector.Client`, not `connector.ConnectorClient`)
+- [ ] Import aliases: **one alias per package, repo-wide**. Two files aliasing the
+      same import differently (`platdomain` vs `platformdomain`) is a real finding —
+      grep before accepting a new alias:
+      ```bash
+      grep -rn '"<module>/internal/platform/domain"' --include="*.go" internal/ | sed 's/.*  *\([a-z]*\) "/\1/' | sort -u
+      ```
+- [ ] Files snake_case (`block_request.go`); one primary type per file, except
+      deliberate collections (`dto.go`, `errors.go`, `constants.go`)
+
+#### 9.6 How to report — the rename table is MANDATORY
+
+The output of check 9 is a **table of concrete rename proposals**, always present
+in the report (inside the `<details>` block), even when everything passes.
+
+| # | Archivo | Actual | **Propuesto** | Razón |
+|---|---------|--------|---------------|-------|
+| 1 | `cards/service.go:24` | `cards.CardsService` | `cards.Service` | Stuttering: el paquete ya dice `cards` |
+| 2 | `cards/domain/dto.go:31` | `BlockTypeId` | `BlockTypeID` | Acrónimo: `ID` va en mayúsculas |
+| 3 | `repository/sql_repository.go:13` | alias `platformdomain` | `platdomain` | 4 archivos del repo ya usan `platdomain` |
+| 4 | `external/processingcore.go:88` | `processCard()` | `blockCard()` | Verbo vacío: nombrar el efecto |
+
+Rules for the table:
+
+- **Cada fila lleva una propuesta.** Ninguna fila puede decir "mejorar el nombre",
+  "poco descriptivo" o "revisar". Si no se te ocurre el nombre correcto, el hallazgo
+  no está listo — busca cómo llama el repo a ese concepto y propón eso.
+- **`Razón` en una línea**, citando la regla (stuttering / acrónimo / palabra ruido /
+  scope / léxico inconsistente), no un párrafo.
+- **Cuando todo pasa**, la tabla lleva una fila
+  `— | — | Todas las convenciones seguidas ✅ | — | —` **y debajo una línea de lo
+  que sí verificaste**: receptores, `ctx` primero, `error` último, acrónimos,
+  stuttering, alias de import, palabras ruido. Así el autor sabe que el check corrió
+  y no se saltó.
+- **Renombres masivos**: si la propuesta toca >10 sitios, no la conviertas en
+  bloqueante del PR — proponla y márcala como trabajo de seguimiento, indicando el
+  comando: `gofmt -r 'oldName -> newName' -w ./...` o el rename del IDE (que además
+  actualiza referencias en tests).
+
+En el cuerpo del reporte (fuera de la tabla) sólo van los nombres cuyo impacto
+excede el estilo — un nombre que **miente** sobre lo que el valor contiene, o una
+inconsistencia de léxico que va a propagarse a los siguientes PRs. Ésos sí como
+`Debe corregirse`, con el mismo formato de propuesta:
+
+> `[naming]` `external/processingcore.go:41` — el campo `HoldResponseCode` recibe el
+> `blockTypeKey`, no un código de respuesta: el nombre miente sobre el contenido.
+> El comentario `// blockTypeKey` es la prueba de que el nombre no se explica solo.
+> **Propuesta**: `BlockTypeKey`, y si el JSON del proveedor exige `holdResponseCode`,
+> que la diferencia viva sólo en el tag: `BlockTypeKey string \`json:"holdResponseCode"\``.
+
+The **Naming & conventions** table is ALWAYS present in the report, even when
+everything passes (with a "todas las convenciones seguidas ✅" row). When it
+passes, list in one line what you actually checked — receivers, `ctx` first,
+`error` last, acronyms, stuttering, aliases — so the author knows it wasn't skipped.
+
+#### 9b. Function & method signature design (SHOULD-FIX)
+
+Naming says what it is called; the signature says how it can be misused.
+
+- [ ] `ctx context.Context` is the **first** parameter, always, and named `ctx`.
+      Never stored in a struct field
+- [ ] `error` is the **last** return value
+- [ ] **No boolean parameters**: `Block(ctx, card, true)` is unreadable at the call
+      site. Use a named type or two methods (`Block` / `Unblock`)
+- [ ] More than 4-5 parameters, or 2+ adjacent params of the same type
+      (`f(customerID, accountID, cardID string)` — swappable, compiler-silent) →
+      take a params struct
+- [ ] **Accept interfaces, return concrete types** — a constructor returning an
+      interface hides fields and blocks the caller from extending
+- [ ] Pointer vs value in returns is deliberate: `*Card` when nil is a meaningful
+      "absent"; `Card` when it is always present. `(*Card, error)` where the pointer
+      is never nil on success is a nil-check the caller pays for on every call
+- [ ] Every exported symbol has a doc comment starting with its own name
+- [ ] Struct literals crossing package boundaries use **keyed fields**
+      (`Endpoint{URL: u, Path: p}`) — positional literals break silently when a
+      field is added
 
 ### 10. Config completeness (NIT)
 
@@ -875,32 +1213,208 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 
 ### 10b. Semantic version bump in config.yml (SHOULD-FIX — REQUIRED on every PR)
 
-**Every PR MUST bump `app.version` in `config.yml` by exactly one patch** (e.g.
-`1.7.18` → `1.7.19`), regardless of change type — feat / fix / refactor / docs all
-do +1 patch. This is the project's mandatory "semantic up"; the immutable build
-that gets promoted `main → DEV → UAT → PRD` is identified by this version, so a PR
-without a bump ships the same version twice. `config.yaml` keeps a placeholder
-(e.g. `v1.0.0`) and is NOT bumped — only `config.yml` carries the live version.
+**Every PR MUST bump `app.version` in `config.yml` semantically**: **minor** for a
+new feature (`feat`), **patch** for a fix / refactor / docs / test (`fix`, `hotfix`,
+`refactor`, `docs`, `test`). Example: a `feat` takes `1.49.0` → `1.50.0`; a
+`refactor` takes `1.50.0` → `1.50.1`. This is the project's mandatory version step;
+the immutable build that gets promoted `main → DEV → UAT → PRD` is identified by
+this version, so a PR without a bump ships the same version twice. `config.yaml`
+keeps a placeholder (e.g. `v1.0.0`) and is NOT bumped — only `config.yml` carries
+the live version.
 
 ```bash
-# The PR MUST change app.version in config.yml — one patch above main's current value
+# The PR MUST change app.version in config.yml
 git diff origin/main...pr-<N> -- config.yml | grep -E '^\+\s*version:'
 # Cross-check the base so the bump isn't stale after a rebase/merge:
 git show origin/main:config.yml | grep -E '^\s*version:'
 ```
 
 Flag as ❌ when:
-- **No bump**: `app.version` unchanged in the PR → require a +1 patch bump.
-- **Stale / wrong increment**: the new value is not exactly one patch above
-  `origin/main`'s current `app.version` (common after a rebase or a main merge —
-  the version conflict must resolve to `main` + 1, not the branch's old number).
+- **No bump**: `app.version` unchanged in the PR → require a semantic bump.
+- **Wrong segment**: a `feat` bumped patch instead of minor, or a `fix`/`refactor`
+  bumped minor instead of patch — match the increment to the Conventional Commit type.
+- **Stale increment**: the new value is not exactly one step above `origin/main`'s
+  current `app.version` (common after a rebase or a main merge — the version
+  conflict must resolve to `main` + 1 step, not the branch's old number).
 - **Bumped the wrong file**: `config.yaml` changed instead of `config.yml`.
 
 ---
 
-## go-bricks discovery (Phase 3b — SHOULD-FIX)
+## Correctness, runtime & code smells (Phase 3 — checks 11-15)
 
-Phase 3a (checks 1-10) catches anti-patterns. Phase 3b actively explores what
+These checks target correctness bugs and code smells that linters often miss.
+Every finding MUST cite file:line and a concrete failure scenario.
+
+**Developer-explicit findings**: When reporting bugs and should-fix items, write
+them as a developer would explain to another developer in a PR comment. Include:
+- The exact code that's wrong (quote the line)
+- What happens at runtime (e.g., "this panics with nil pointer dereference when...")
+- The fix as a concrete code diff (before → after)
+- Why the fix is correct (e.g., "because `%w` preserves the error chain for `errors.Is()`")
+
+Bad: "Error handling could be improved"
+Good: "`sql_repository.go:45` — `fmt.Errorf("failed: %s", err)` loses the error
+chain. Callers using `errors.Is(err, ErrNotFound)` will get `false` because `%s`
+stringifies instead of wrapping. Fix: `fmt.Errorf("failed: %w", err)`"
+
+### 11. Error handling bugs (BLOCKER)
+
+```bash
+# Ignored errors — the returned error is assigned to _ or not checked
+grep -n "_ = .*\.\(Do\|Query\|Exec\|Close\|Scan\|Decode\|Unmarshal\)" <changed-files> --include="*.go" | grep -v _test.go
+
+# Error checked but original error lost (wrapped without %w)
+grep -n 'fmt\.Errorf.*[^%]"' <changed-files> --include="*.go" | grep -v "%w" | grep -v _test.go
+
+# Shadowed err in nested scope (re-declares err with := inside an if/for that already has err)
+# Manual inspection: look for `err :=` inside a block that has an outer `err`
+```
+
+Flag:
+- **Swallowed errors**: `_ = rows.Close()` — an error during Close can mask data loss
+- **Lost error chain**: `fmt.Errorf("failed: %s", err)` instead of `%w` — breaks `errors.Is/As`
+- **Shadowed err**: inner `:=` silently discards outer err; use `=` instead
+- **Nil pointer after error check**: `if err != nil { ... }` followed by using the value without checking `nil`
+- **Deferred Close without error check**: `defer resp.Body.Close()` — should check or log the error
+
+### 12. Concurrency bugs (BLOCKER)
+
+```bash
+# Goroutine leaks — goroutine started without cancellation path
+grep -n "go func\|go .*(" <changed-files> --include="*.go" | grep -v _test.go
+
+# Missing mutex for shared state
+grep -n "sync\.Mutex\|sync\.RWMutex" <changed-files> --include="*.go"
+```
+
+Flag:
+- **Goroutine without context**: `go func()` that doesn't receive `ctx` or a done channel
+- **Shared state without sync**: struct fields accessed from multiple goroutines without mutex
+- **Channel not closed**: producer goroutine that never closes the channel (consumer blocks forever)
+- **Race-prone map**: concurrent `map` read/write without `sync.Mutex` or `sync.Map`
+
+#### 12b. The bugs that actually reach production
+
+Most production concurrency incidents are **not** data races — the race detector
+already catches those. They are goroutine leaks, unbounded growth and blocked
+waits. Check these explicitly:
+
+- [ ] **Every goroutine has a termination path.** It selects on `ctx.Done()`, reads
+      from a channel that is guaranteed to close, or is bounded by a `WaitGroup` the
+      caller waits on. A `go func()` whose only exit is "the work finishes" leaks
+      when the work never finishes
+- [ ] **`select` without `default` or a timeout case** blocks forever if the
+      upstream goroutine dies before sending. Either `case <-ctx.Done():` or
+      `case <-time.After(d):` must be present
+- [ ] **`time.Ticker` stopped**: `defer tick.Stop()` — a ticker without it leaks its
+      runtime timer for the process lifetime
+- [ ] **`time.Time` compared with `Equal()`**, never `==` (`==` also compares the
+      monotonic reading and the location pointer, so two equal instants can differ)
+- [ ] **`sync.Map` compound operations**: never `Store`/`Delete` based on a previous
+      `Load` — use `LoadOrStore` / `LoadAndDelete`. The read-then-write pair is not atomic
+- [ ] **`sync.RWMutex` only with a benchmark that proves it wins.** For a couple of
+      short reads it is slower than `Mutex`
+- [ ] **Zero-capacity channel** (`make(chan T)`) — verify the rendezvous is intentional
+      and not an accidental deadlock
+- [ ] **`defer` inside a loop**: the deferred call runs at function exit, not at
+      iteration end — N iterations hold N resources open
+- [ ] **`errgroup`**: `g.Wait()` is actually called and its error is checked; the
+      group is created with `errgroup.WithContext` when siblings must cancel
+
+#### 12c. Verifying it (Go 1.25+)
+
+```bash
+go test ./... -race                    # mandatory when the diff touches concurrency
+```
+
+- [ ] Concurrency tests use **`testing/synctest`** (stdlib since Go 1.25) rather than
+      `time.Sleep` to synchronize: a bubble with a fake clock makes the test both
+      deterministic and instant. A `time.Sleep` in a test is a flake with a delay fuse
+- [ ] Tests use **`t.Context()`** instead of `context.Background()` — it is cancelled
+      on test cleanup, so a leaked goroutine fails the test instead of outliving it
+- [ ] Code under test receives its `ctx` from the caller; a function that calls
+      `context.Background()` internally cannot be tested for cancellation at all
+
+### 13. Resource leaks (BLOCKER)
+
+```bash
+# HTTP response body not closed
+grep -n "\.Do(\|\.Get(\|\.Post(" <changed-files> --include="*.go" | grep -v _test.go
+# Then verify each has a defer res.Body.Close() nearby
+
+# SQL rows not closed
+grep -n "\.Query\|\.QueryRow\|\.QueryContext" <changed-files> --include="*.go" | grep -v _test.go
+# Then verify each has defer rows.Close()
+
+# File handles not closed
+grep -n "os\.Open\|os\.Create" <changed-files> --include="*.go" | grep -v _test.go
+```
+
+Flag:
+- **Response body leak**: `http.Do()` result without `defer res.Body.Close()`
+- **SQL rows leak**: `db.Query()` without `defer rows.Close()`
+- **File handle leak**: `os.Open()` without `defer f.Close()`
+
+### 14. Fail-closed validation (SHOULD-FIX)
+
+When an operation fails (network timeout, parse failure, API error), the code
+must deny/fail safely, not silently proceed with stale or empty data.
+
+Flag:
+- **Silent fallback**: catch block returns empty/default data instead of propagating the error
+- **Missing validation on external response**: external API response parsed without checking status
+- **Stale cache on error**: cache miss + fetch error → returns stale value without logging
+
+### 15. Test quality (SHOULD-FIX)
+
+Go beyond "tests exist" — verify tests are meaningful:
+
+- [ ] **Regression value**: would the test FAIL if the production code it targets were removed?
+- [ ] **No mock-only assertions**: test asserts on real behavior, not just that a mock was called
+- [ ] **Error paths covered**: not just happy path — test what happens when the DB is down, API returns 500, input is malformed
+- [ ] **No tautological assertions**: `assert.Equal(t, result, result)` or asserting the mock's return value
+- [ ] **Complete mocks**: mock objects mirror the full shape of the real object, not just the fields the author expected
+- [ ] **No weakened assertions**: existing assertions not removed or relaxed to make tests pass
+
+```bash
+# Check if tests were weakened — removed assertions
+git diff origin/main...pr-<N> -- "*_test.go" | grep "^-.*assert\|^-.*require" | grep -v "^---"
+```
+
+Also verify **what the tests pin**. A test that only asserts "no error" documents
+nothing. The valuable ones pin the *contract*: the exact wire body sent, the exact
+header, the exact error code returned. When a PR adds that kind of test, say so —
+it is the difference between a test and a regression guard.
+
+### 16. Modernization — `go fix` (NIT)
+
+Since Go 1.26 `go fix` runs the analysis framework with ~20 "modernizers" that
+propose **safe, mechanical** rewrites. It is deterministic and free, so run it:
+
+```bash
+go fix -diff ./...       # non-empty diff → exit code != 0
+go tool fix help         # list the registered analyzers
+```
+
+Relevant fixers: `any` (`interface{}` → `any`), `rangeint` (3-clause loop →
+`for range n`), `slicescontains`, `slicessort`, `minmax`, `mapsloop`, `fmtappendf`,
+`omitzero` (`omitempty` → `omitzero` on structs), `forvar` (redundant loop-var
+re-declaration, obsolete since Go 1.22), plus two real correctness checks:
+`hostport` (malformed `net.Dial` addresses) and `buildtag`.
+
+Report as **NIT** — with two exceptions promoted to SHOULD-FIX:
+- `hostport` or `buildtag` findings — those are bugs, not style
+- `omitzero` on a struct field with `omitempty`: `omitempty` **does not omit an
+  empty struct**, so the JSON contract already differs from what the author expects
+
+Check `go.mod` first: these fixers assume the module's Go version supports the
+target construct.
+
+---
+
+## go-bricks discovery (Phase 4 — SHOULD-FIX)
+
+Phase 2 (checks 1-10) catches anti-patterns. Phase 4 actively explores what
 go-bricks offers that the PR could leverage. The goal is to maximize the
 framework's value — not to block, but to suggest better implementations.
 
@@ -996,9 +1510,9 @@ as context for a future upgrade — never block the PR for a version bump alone.
 
 ---
 
-## Scope & evidence verification (Phase 4)
+## Scope & evidence verification (Phase 5 — checks 17-18)
 
-### 16. Scope containment (SHOULD-FIX)
+### 17. Scope containment (SHOULD-FIX)
 
 Verify the PR touches only one logical scope. A PR that mixes concerns is
 harder to review, test, and revert.
@@ -1019,7 +1533,7 @@ Flag:
 Exception: changes in `internal/plataform/` (shared infra) that are consumed by the module
 changes are acceptable.
 
-### 17. Evidence-based findings (MANDATORY)
+### 18. Evidence-based findings (MANDATORY)
 
 Every finding in the report MUST include:
 - **Archivo/File**: exact `path/to/file.go:line`
@@ -1147,6 +1661,13 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 | Verificación | Estado | Notas |
 |:--|:--:|:--|
+| **Base de evidencia (Phase 0)** | | |
+| `go build ./...` | ✅/❌/⚠️ | |
+| `go vet ./...` | ✅/❌/⚠️ | |
+| `go test ./...` | ✅/❌/⚠️ | cobertura por paquete tocado |
+| `golangci-lint run ./...` | ✅/❌/⚠️ | comparado contra `origin/main` |
+| `go test -race` | ✅/N/A | sólo si el diff toca concurrencia |
+| Modernización (`go fix -diff`) | ✅/❌/N/A | |
 | **go-bricks** | | |
 | Sin tipos reinventados | ✅/❌/⚠️ | |
 | rawQuery / SQL safety | ✅/❌/⚠️ | |
@@ -1159,9 +1680,11 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Ubicación archivos/structs | ✅/N/A | |
 | Patrones handler | ✅/N/A | |
 | Llamadas externas httpclient | ✅/N/A | |
+| Integración bus (nombres, AutoAck, DLQ, idempotencia) | ✅/❌/⚠️/N/A | |
 | Patrones de test | ✅/N/A | |
 | Sin código duplicado | ✅/❌ | |
 | Nombres y convenciones | ✅/❌ | |
+| Diseño de firmas (ctx/error/params) | ✅/❌ | |
 | Config completa | ✅/N/A | |
 | Version bump en config.yml (+1 patch) | ✅/❌ | |
 | **Bugs & code smells** | | |
@@ -1179,11 +1702,16 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 </details>
 
 <details>
-<summary>📝 Nombres y convenciones</summary>
+<summary>📝 Nombres — propuestas de renombrado</summary>
 
-| # | Archivo | Actual | Sugerido | Regla |
-|---|---------|--------|----------|-------|
+| # | Archivo | Actual | **Propuesto** | Razón |
+|---|---------|--------|---------------|-------|
+| 1 | `path/file.go:24` | `{nombre actual}` | `{nombre propuesto}` | {regla en una línea} |
 | — | — | Todas las convenciones seguidas ✅ | — | — |
+
+Verificado: receptores, `ctx` primero, `error` último, acrónimos (`ID`/`URL`/`HTTP`),
+stuttering, alias de import, palabras ruido (`Data`/`Info`/`Manager`), verbos vacíos,
+constantes autodescriptivas.
 
 </details>
 
@@ -1248,6 +1776,13 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 | Check | Status | Notes |
 |:--|:--:|:--|
+| **Evidence base (Phase 0)** | | |
+| `go build ./...` | ✅/❌/⚠️ | |
+| `go vet ./...` | ✅/❌/⚠️ | |
+| `go test ./...` | ✅/❌/⚠️ | coverage per touched package |
+| `golangci-lint run ./...` | ✅/❌/⚠️ | compared against `origin/main` |
+| `go test -race` | ✅/N/A | only if the diff touches concurrency |
+| Modernization (`go fix -diff`) | ✅/❌/N/A | |
 | **go-bricks** | | |
 | No reinvented types | ✅/❌/⚠️ | |
 | rawQuery / SQL safety | ✅/❌/⚠️ | |
@@ -1260,9 +1795,11 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | File/struct placement | ✅/N/A | |
 | Handler patterns | ✅/N/A | |
 | External calls httpclient | ✅/N/A | |
+| Bus integration (names, AutoAck, DLQ, idempotency) | ✅/❌/⚠️/N/A | |
 | Test patterns | ✅/N/A | |
 | No duplicate code | ✅/❌ | |
 | Naming & conventions | ✅/❌ | |
+| Signature design (ctx/error/params) | ✅/❌ | |
 | Config complete | ✅/N/A | |
 | Version bump in config.yml (+1 patch) | ✅/❌ | |
 | **Bugs & code smells** | | |
@@ -1280,11 +1817,16 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 </details>
 
 <details>
-<summary>📝 Naming & conventions</summary>
+<summary>📝 Naming — rename proposals</summary>
 
-| # | File | Current | Suggested | Rule |
-|---|------|---------|-----------|------|
+| # | File | Current | **Proposed** | Reason |
+|---|------|---------|--------------|--------|
+| 1 | `path/file.go:24` | `{current name}` | `{proposed name}` | {rule, one line} |
 | — | — | All conventions followed ✅ | — | — |
+
+Checked: receivers, `ctx` first, `error` last, initialisms (`ID`/`URL`/`HTTP`),
+stuttering, import aliases, noise words (`Data`/`Info`/`Manager`), empty verbs,
+self-describing constants.
 
 </details>
 
@@ -1306,6 +1848,39 @@ File name: `pr-{PR_NUMBER}-review.md` (review) or `scan-{path-slug}-audit.md` (s
 
 When running `/go-dev-technical scan <path>`, follow this order:
 
+### Step 0 — Sync `main` before scanning (MANDATORY)
+
+**Always audit against the latest `main`** — a scan of a stale checkout reports
+findings already fixed upstream and misses ones just merged. Bring `main` up to date
+first, every time, before any grep runs:
+
+```bash
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+```
+
+**Guard the user's work-in-progress.** Never blow away uncommitted changes to run
+the scan:
+
+- If the working tree is **clean** → check out and pull `main` as above, scan, done.
+- If the working tree is **dirty** (or the user is mid-feature and must stay on their
+  branch) → do NOT switch branches. Instead scan the latest `main` in an isolated
+  worktree, exactly like the review flow (Step 0.1):
+  ```bash
+  git fetch origin
+  WT="<scratchpad>/scan-main"
+  git worktree add --detach "$WT" origin/main
+  cd "$WT"          # run the scan here; <path> is relative to this worktree
+  ```
+  Remove it when done (from the repo root, never from inside the worktree):
+  ```bash
+  cd <repo-root> && git worktree remove --force "$WT" && git worktree prune
+  ```
+
+Report which commit of `main` the audit ran against (`git rev-parse --short HEAD`)
+in the scan header, so the findings are reproducible.
+
 ### Step 1 — Discover go-bricks version and features
 
 ```bash
@@ -1315,7 +1890,7 @@ BRICKS=$(go env GOMODCACHE)/github.com/gaborage/go-bricks@$(grep go-bricks go.mo
 
 ### Step 2 — Run all anti-pattern checks
 
-Run every grep from sections 1, 1b, 2, 4, 5, 6, 7, 8, 11, 12, 13 against `<path>`.
+Run every grep from checks 1, 1b, 2, 4, 5, 6, 7, 8, 9, 11, 12, 12b, 13 against `<path>`.
 Replace `<changed-files>` with `<path>` and `<module>` with each module under `<path>`.
 
 ### Step 3 — rawQuery deep audit
@@ -1362,3 +1937,132 @@ Use the same template as review but:
 - Include the rawQuery audit table
 - Include the unused go-bricks features section
 - Include all anti-pattern findings with file:line evidence
+- **Include the remediation roadmap (Step 6)** — a scan without a plan is a list of
+  complaints
+
+### Step 6 — Remediation roadmap (MANDATORY for `scan`)
+
+A list of 40 findings is not actionable. The deliverable of `scan` is **an ordered,
+sized execution plan**: what to fix, in what order, and split into phases a developer
+can actually merge. Same phase discipline as `/migrate` (see
+`novo-legacy-migration-endpoint`), because these fixes travel through the same
+pipeline.
+
+#### 6.1 Hard constraints per phase (inherited from `/migrate`)
+
+| Constraint | Value | Source |
+|---|---|---|
+| Max new lines per phase (impl + tests) | **≤400** | NKH1 sizing / `/migrate` |
+| Max files per phase | **≤10** | NKH1 sizing / `/migrate` |
+| Branch | `feature/{TICKET}-{slug}-{n}`, **always from `main`** | `/migrate` |
+| Per phase | tests + `make check` (0 issues) + **semantic version bump** (minor `feat` / patch `fix`·`refactor`) | `/migrate` |
+| Merge order | one phase merged before the next starts | `/migrate` |
+| Security fixes (SQL injection, PCI) | **≤300 lines**, surgical, first in the queue | stricter, as `parity-solve` |
+
+If a fix does not fit, **split it** — never widen a phase. A "phase" that touches
+three modules is two phases.
+
+#### 6.2 Prioritization
+
+Order by **risk × blast radius**, not by how easy it is:
+
+| Prio | What goes here | Why first |
+|:--:|---|---|
+| **P0** | SQL injection, PCI leaks (PAN/CVV in logs), tenant-isolation breaks, resource leaks in hot paths | Exploitable or already leaking |
+| **P1** | Correctness: swallowed errors, lost error chain, goroutine leaks, fail-open branches | Silent wrong behavior in production |
+| **P2** | Layer violations, raw `net/http` / `sql.DB` instead of go-bricks, duplicated clients | Structural debt that multiplies with each new module |
+| **P3** | rawQuery migratable to QueryBuilder, dead scaffolding, duplicated constants/types | Maintenance cost, no runtime risk |
+| **P4** | Naming, missing docs, modernization (`go fix`) | Readability; batch them, never a phase of their own |
+
+Two sequencing rules that override raw priority:
+
+1. **Enablers first.** If five P3 findings all disappear once one shared helper
+   exists, that helper is phase 1 even though it is P3 — it converts five phases
+   into one.
+2. **Never mix priorities in one phase.** A P0 phase must be reviewable in ten
+   minutes; padding it with renames destroys that.
+
+#### 6.3 Estimating a phase
+
+For each finding, estimate `~N líneas` = impl + tests. Rules of thumb, stated as
+estimates and never as fact:
+
+| Fix type | Typical |
+|---|---|
+| Constant/alias rename (mechanical, IDE-assisted) | ~5-20 líneas, muchos archivos → cuidado con el cap de 10 files |
+| Wrapping an error / adding `%w` + test | ~10-25 líneas |
+| Adding a missing error-path test | ~20-40 líneas |
+| Migrating one raw `const` query to QueryBuilder + test | ~40-80 líneas |
+| Replacing a raw `net/http` client with the connector + tests | ~120-200 líneas |
+| Extracting a shared helper consumed by N call sites | ~80-150 líneas + N × ~5 |
+
+When a rename touches more than 10 files, the file cap — not the line cap — is what
+splits it. Say so explicitly in the roadmap.
+
+#### 6.4 Roadmap output format
+
+```
+Roadmap de remediación — {path}
+Hallazgos: {N} (P0:{a} P1:{b} P2:{c} P3:{d} P4:{e})   ·   Fases estimadas: {F}
+
+Fase 1 · P0 · feature/{TICKET}-sqlsafe-1          ~{X} líneas · {n} files
+  ├─ repo/legacy.go:30   fmt.Sprintf+SQL → QueryBuilder            ~60
+  └─ repo/legacy.go:78   f.Raw() sin parametrizar → f.Raw(cond,?)  ~20
+  Desbloquea: nada · Bloqueado por: nada
+
+Fase 2 · P1 · feature/{TICKET}-errchain-1         ~{Y} líneas · {n} files
+  └─ service/card.go:112  %s → %w (rompe errors.Is en 3 callers)   ~15
+  Desbloquea: Fase 5 (tests de error path)
+
+Fase 3 · P2 · feature/{TICKET}-connector-1        ~{Z} líneas · {n} files
+  └─ cards/processing → platform/connector (elimina net/http crudo) ~180
+  Enabler: colapsa las fases 6 y 7 en una
+
+...
+
+Diferido (no entra en fases):
+  · {hallazgo}  — {por qué no ahora: bloqueado por X / requiere decisión de producto}
+
+Batch final · P4 · feature/{TICKET}-naming-1      ~{W} líneas · {n} files
+  └─ 12 renombrados (tabla de nombres) — mecánico, un solo commit
+```
+
+Rules for the roadmap:
+
+- **Every phase states `~líneas` and `files`** and both must be under the cap. If
+  a row exceeds it, it is already split in the output — do not emit an over-cap phase
+  and add "habría que dividirlo".
+- **Declare dependencies** (`Bloqueado por` / `Desbloquea`) so the order is not
+  arbitrary. A phase with no dependencies can be parallelized by another developer;
+  say which ones those are.
+- **`Diferido` is a first-class section.** Findings that need a product decision, or
+  that depend on work outside the scanned path, go here with the reason — not
+  silently dropped, not padded into a phase.
+- **Total estimate at the top**, and the honest caveat that line counts are
+  estimates from static reading, not measurements.
+- **Present the roadmap and stop.** `scan` never creates branches and never edits
+  code — it produces the plan. Branch creation follows the `/migrate` flow (ask for
+  the Jira ticket, `git checkout main && git pull`, one branch per phase).
+
+File name: `scan-{path-slug}-audit.md` — same temp-dir rule as the review report.
+
+---
+
+## References
+
+The rules in this skill are grounded in these sources — cite them when an author
+pushes back on a naming or concurrency finding:
+
+- [Google Go Style Guide — Decisions](https://google.github.io/styleguide/go/decisions) — naming, receivers, scope-proportional length, getters, initialisms (check 9)
+- [Go Concurrency review checklist](https://github.com/code-review-checklists/go-concurrency) — goroutine lifecycle, `time.Ticker`, `sync.Map`, `RWMutex` (check 12b)
+- [Testing concurrent code with testing/synctest](https://go.dev/blog/synctest) — deterministic concurrency tests, stdlib since Go 1.25 (check 12c)
+- [Go 1.26 release notes](https://go.dev/doc/go1.26) — `go fix` modernizers, Green Tea GC, `goroutineleak` pprof profile (check 16)
+- [golangci-lint v2 docs](https://golangci-lint.run/docs/linters/) — `linters.default` replaced `enable-all`/`disable-all` (Phase 0)
+- [Clean Code, cap. 2 — Meaningful Names](https://www.cs.hmc.edu/cs70/homework/homework-03/pdfs/stylemartin.pdf) — intention-revealing names, noise words, consistent lexicon (check 9.0b)
+- go-bricks `messaging` / `outbox` / `inbox` packages — `Declarations.Validate()`, `ConsumerDeclaration`, `EventIDFromHeaders`, `Inbox.ProcessOnce` (check 6b). Read them in `$(go env GOMODCACHE)/github.com/gaborage/go-bricks@<ver>/`
+- NKH1 `common:pr-review` — sizing, title, coverage floor, promotion gates (Phase 1)
+- `novo-legacy-migration-endpoint` (`/migrate`) — phase caps (≤400 líneas / ≤10 files), branch-per-phase from `main`, version bump per phase (scan Step 6)
+
+**Keep this list honest**: when a rule here stops matching the linked source
+(a Go release changes a default, the style guide is revised), update the rule —
+do not let the skill drift into folklore.
