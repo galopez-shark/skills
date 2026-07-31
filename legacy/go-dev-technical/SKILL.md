@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.4.0"
+  version: "2.5.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -253,6 +253,7 @@ Not about blocking — about leveraging the framework's full potential.
 |---|-------|:-----:|----------|
 | 1 | No reinvented types | 2 | BLOCKER |
 | 1b | rawQuery / SQL safety | 2 | BLOCKER |
+| 1c | Vendor adapter over `sql.DB` (unsupported vendor) | 2 | SHOULD-FIX |
 | 2 | Layer boundaries | 2 | BLOCKER |
 | 3 | Module wiring | 2 | SHOULD-FIX |
 | 4 / 4b / 4c / 4d | DB patterns, Entity/Row mapping, query construction, dead scaffolding | 2 | SHOULD-FIX |
@@ -551,6 +552,60 @@ When running `/go-dev-technical scan`, include a rawQuery audit table:
 | 3 | `repo/queries.go:45` | raw const | ⚠️ Migratable | Builder can express this JOIN |
 | 4 | `repo/queries.go:80` | raw const UNION | ✅ Justified | Builder doesn't support UNION |
 | 5 | `repo/search.go:20` | `qb.Expr()` | ✅ Safe | Static expression, no user input |
+
+### 1c. Vendor adapter over `sql.DB` — justified escape from check 1 (SHOULD-FIX)
+
+Check 1 flags raw `sql.DB` as an anti-pattern because go-bricks provides `database.Interface`.
+**Exception**: go-bricks ships only **PostgreSQL and Oracle** vendors. When a module must reach a
+vendor go-bricks does not support (SQL Server, MySQL, etc.), wrapping `sql.DB` in an **adapter that
+implements `database/types.Interface`** is the correct, sanctioned pattern — NOT a check-1
+violation. Do not flag the `sql.DB` itself; instead validate the adapter against the baseline below.
+
+```bash
+# Adapter packages that wrap an unsupported vendor
+grep -rln "types.Interface\|database/types" <path> --include="*.go" | grep -iE "sqlserver|mysql|mssql"
+```
+
+When you see such an adapter package (e.g. `repository/sqlserver/adapter.go`), verify:
+
+- [ ] **Implements `types.Interface` with a compile-time assertion**: `var _ types.Interface = (*Adapter)(nil)`.
+- [ ] **Read-only intent is enforced, not implied**: write/tx paths (`Exec`, `Begin`, `BeginTx`,
+      `Prepare`, `CreateMigrationTable`) return a package sentinel `ErrReadOnly`
+      (`errors.Is`-comparable), never a silent `nil`/no-op. A read-only adapter that lets `Exec`
+      through is a data-integrity risk.
+- [ ] **`New(db *sql.DB)` constructor separate from `Open(cfg)`** — so tests inject `sqlmock`
+      without a live server. An adapter that only has `Open` is untestable offline.
+- [ ] **DSN built with `net/url` + `url.UserPassword`**, never string concatenation — escaping is
+      automatic and the password is carried structurally, not interpolated.
+- [ ] **TLS explicit**: `encrypt=true` in the DSN; `TrustServerCertificate` (or equivalent) is a
+      per-environment **config field**, never hardcoded `true`.
+- [ ] **No credential leak**: `Config.String()` omits password AND user (renders only
+      host/port/database); `Open` wraps errors with `%s`(String()), never the raw DSN. The DSN
+      string must never reach a log or error.
+- [ ] **Driver name is deliberate and documented — it decides the placeholder dialect, and the SQL
+      must match**. This is a silent-runtime-break gotcha (no compile error):
+      - `mssql` (denisenkom) → positional `?`
+      - `sqlserver` (denisenkom / microsoft) → named `@p1` / `@name`
+      Flag any adapter whose driver name and query placeholders disagree, and any without a comment
+      explaining the choice. Prefer the maintained `github.com/microsoft/go-mssqldb` over the
+      archived `github.com/denisenkom/go-mssqldb`.
+- [ ] **Pool sized explicitly with rationale** (`SetMaxOpenConns`, `SetMaxIdleConns`,
+      `SetConnMaxLifetime`): a periodic/telemetry sweep sizes small (e.g. 2/1); a request-path pool
+      sizes to its load. A pool with no limits on a tenant DB is a finding.
+- [ ] **`Health(ctx)` with a bounded timeout** (`context.WithTimeout` + `PingContext`) and
+      **`Stats()`** exposing pool metrics.
+- [ ] **Package doc comment** states why the adapter exists (go-bricks lacks the vendor) and what is
+      functional vs `ErrReadOnly`.
+- [ ] Error messages in **English**, consistent with the rest of the codebase (no mixed-language
+      strings like `"abrir conexión a"`).
+
+**Reference baseline** — a read-only SQL Server adapter satisfying `types.Interface`: `Adapter`
+over `New`/`Open`, net/url DSN with `url.UserPassword`, `ErrReadOnly` sentinel on every write path,
+bounded `Health`, credential-safe `String()`, and a documented driver/placeholder choice. If the PR
+under review diverges (mixes languages, leaks the DSN, hardcodes `TrustServerCertificate`, omits
+`SetMaxIdleConns`, or picks a driver whose placeholders don't match the query), flag the specific
+gap against this baseline — it is a SHOULD-FIX, not a blocker, unless a credential leaks (BLOCKER)
+or `Exec` is not disabled on a read-only adapter (BLOCKER).
 
 ### 2. Layer boundaries (BLOCKER)
 
