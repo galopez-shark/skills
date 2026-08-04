@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.5.0"
+  version: "2.6.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -1265,6 +1265,56 @@ If the PR adds config consumption (`config:` tags or `deps.Config`):
 - [ ] Key exists in both `config.yml` (env vars) and `config.yaml` (local values)
 - [ ] New config key follows existing naming convention
 - [ ] Sensitive values use env var placeholders, not hardcoded
+- [ ] **App-specific keys live under `custom:`** (see 10a) — anything go-bricks does
+      not natively map MUST be nested under `custom.*`, never at the config root
+
+#### 10a. Application config belongs under `custom:` (SHOULD-FIX)
+
+go-bricks owns a **fixed set of top-level config sections** and binds them into its
+own structs: `app`, `server`, `observability`, `log`, `database`, `databases`,
+`keystore`, `messaging`, `source`, `multitenant` (and their documented children).
+Any key **outside** that set is application config and MUST be nested under the
+**`custom:`** object — that is the namespace go-bricks reserves for service-specific
+values and exposes via `config:"custom.xxx.yyy"` struct tags / `InjectInto`.
+
+A service-specific block placed at the config **root** (a sibling of `server:` /
+`database:`) is a finding: it is not a value go-bricks maps, so it either fails to
+bind or silently relies on a non-standard read path, and it pollutes the namespace
+go-bricks controls (a future framework key could collide with it).
+
+**Rule of thumb**: *"is this a value go-bricks already knows how to map?"*
+- **YES** (a DB pool size, a server timeout, an observability endpoint) → it goes in
+  its native section (`database:`, `server:`, `observability:`), never under `custom:`.
+- **NO** (an external service URL, a downstream host/credentials, a feature flag, an
+  operation id, a SQL Server Core connection) → it goes under `custom:`.
+
+```yaml
+# ❌ WRONG — service-specific block at the root, sibling of server/database
+corepostilion:
+  host: "${CUSTOM_COREPOSTILION_HOST}"
+
+# ✅ CORRECT — nested under custom:, mapped via config:"custom.corepostilion.host"
+custom:
+  corepostilion:
+    host: "${CUSTOM_COREPOSTILION_HOST}"
+```
+
+```bash
+# Any new top-level key in config.yml that is NOT a go-bricks-owned section
+git diff origin/main...pr-<N> -- config.yml | grep -E '^\+[a-z_]+:' \
+  | grep -vE '^\+(app|server|observability|log|database|databases|keystore|messaging|source|multitenant|custom):'
+# Non-empty output → an app key escaped the custom: namespace → SHOULD-FIX
+```
+
+Flag as SHOULD-FIX: *"`config.yml:<line>` — el bloque `<key>` es config de la
+aplicación (go-bricks no lo mapea nativamente) y está en la raíz; debe anidarse bajo
+`custom:` y consumirse con `config:\"custom.<key>...\"`."* The exception is a genuine
+go-bricks-owned section — if in doubt, grep the go-bricks `config` package for the
+key before flagging:
+```bash
+BRICKS=$(go env GOMODCACHE)/github.com/gaborage/go-bricks@$(grep go-bricks go.mod | awk '{print $2}')
+grep -rn 'koanf:"<key>"\|mapstructure:"<key>"' "$BRICKS/config"/*.go
+```
 
 ### 10b. Semantic version bump in config.yml (SHOULD-FIX — REQUIRED on every PR)
 
