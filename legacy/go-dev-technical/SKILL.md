@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.7.0"
+  version: "2.8.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -254,6 +254,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 1 | No reinvented types | 2 | BLOCKER |
 | 1b | rawQuery / SQL safety | 2 | BLOCKER |
 | 1c | Vendor adapter over `sql.DB` (unsupported vendor) | 2 | SHOULD-FIX |
+| 1d | No stored procedure calls | 2 | BLOCKER |
 | 2 | Layer boundaries | 2 | BLOCKER |
 | 3 | Module wiring | 2 | SHOULD-FIX |
 | 4 / 4b / 4c / 4d | DB patterns, Entity/Row mapping, query construction, dead scaffolding | 2 | SHOULD-FIX |
@@ -272,6 +273,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 16 | Modernization (`go fix`) | 3 | NIT |
 | 17 | Scope containment | 5 | SHOULD-FIX |
 | 18 | Evidence-based findings | 5 | MANDATORY |
+| 18b | Honor author's prior justifications | 5 | MANDATORY |
 
 ---
 
@@ -606,6 +608,50 @@ under review diverges (mixes languages, leaks the DSN, hardcodes `TrustServerCer
 `SetMaxIdleConns`, or picks a driver whose placeholders don't match the query), flag the specific
 gap against this baseline — it is a SHOULD-FIX, not a blocker, unless a credential leaks (BLOCKER)
 or `Exec` is not disabled on a read-only adapter (BLOCKER).
+
+### 1d. No stored procedure calls (BLOCKER)
+
+**Do not approve a PR that calls a stored procedure / PL/SQL block.** Business logic
+belongs in the Go service layer, not in the database. A stored-procedure call:
+
+- **Cannot be reviewed** — the proc body lives in the database, not in the diff, so the
+  reviewer approves logic they cannot see.
+- **Cannot be tested** with go-bricks — `mocks.MockDatabase` / `sqlmock` exercise the
+  call, never the procedure's internal logic; the real behavior is unverifiable in CI.
+- **Is unversioned by this repo** — the proc drifts from the code, deploys out of band,
+  and breaks the immutable-build promotion contract (`main → DEV → UAT → PRD`).
+- **Bypasses** the QueryBuilder + `Entity[T]` safety and the layer boundaries — the DB
+  becomes a second, hidden service layer.
+
+```bash
+# PL/SQL block, CALL, EXEC/EXECUTE, or OUT params (typical of proc invocations)
+grep -rniE "\bBEGIN\b.*\bEND;|\bCALL[[:space:]]+[A-Za-z0-9_.]+\(|\bEXEC(UTE)?[[:space:]]" <path> --include="*.go" | grep -v _test.go
+grep -rn "sql\.Out\b\|\.Out{" <path> --include="*.go" | grep -v _test.go
+# package.procedure or schema.package.procedure inside a query string
+grep -rniE "[A-Z0-9_]+\.[A-Z0-9_]+\(" <path>/**/repository/ --include="*.go" | grep -viE "\.(Columns|Table|Filter|Query|Exec|Named)\("
+```
+
+For every hit, confirm it is really a procedure/function invocation (a PL/SQL
+`BEGIN…END;`, `CALL pkg.proc(...)`, `EXEC`, an `OUT`/`sql.Out` parameter, or a
+`SCHEMA.PACKAGE.PROC(...)` in the SQL string) and not a plain `SELECT/INSERT/UPDATE`.
+
+**Verdict: BLOCKER — do not approve.** Fix = move the logic into the Go service layer
+and build the data access with the QueryBuilder / parametrized SQL over `Entity[T]`.
+
+**Narrow exception (still ❌, escalated to a human — never a silent ✅)**: a
+legacy-parity migration where the Java source itself calls the stored procedure **and**
+moving the logic to Go is explicitly out of the phase's scope. Even then require, or the
+finding stands: (a) a comment citing the parity reason, (b) a follow-up ticket to
+migrate the logic out of the DB, and (c) the report marks it **❌ BLOCKER — decisión
+humana**, not approved by the skill.
+
+**Report format**:
+
+> `[sp]` `repository/x.go:40` — la query invoca el stored procedure `PKG_X.DO_Y(...)`.
+> La lógica de negocio vive en la DB: no se puede revisar (el cuerpo no está en el diff),
+> no se testea con go-bricks y rompe la capa. **BLOCKER: no aprobar.** Mover la lógica al
+> service + repository con QueryBuilder / SQL parametrizado. Excepción solo con paridad
+> legacy documentada + ticket de migración (y aun así queda a decisión humana).
 
 ### 2. Layer boundaries (BLOCKER)
 
@@ -1764,6 +1810,43 @@ A finding without evidence is speculation, not a review finding. If a check
 cannot be verified (e.g. tests can't be run, file not accessible), use the
 ternary verdict ⚠️ `NO VERIFICADO` instead of guessing.
 
+### 18b. Honor the author's prior justifications (MANDATORY)
+
+A re-review must not re-litigate a point the author already answered. Before emitting
+any finding, read the PR conversation and the author's inline replies — if the author
+already explained why a flagged item does not apply, and the explanation is **valid**,
+do not flag it again.
+
+**Pull the PR conversation** (do this alongside fetching the diff):
+
+```bash
+gh pr view <N> --comments 2>/dev/null                          # general comments
+gh api "repos/<owner>/<repo>/pulls/<N>/comments" 2>/dev/null   # inline review threads
+```
+
+> ⚠️ On NovoPayment repos `gh` frequently lacks scope (`Could not resolve to a
+> Repository`). If the conversation cannot be read, mark this check
+> ⚠️ `NO VERIFICADO — no pude leer los comentarios del PR`; if the user pastes the
+> author's replies, honor them. **Never assume there are no justifications.**
+
+**Rule for each finding**:
+1. Check whether the author already addressed it in a comment.
+2. **Justification technically valid** (verified against Java parity / go-bricks /
+   source — same discipline as every other finding) → **do NOT re-flag.** Record it as
+   resolved so the author sees it was considered:
+   > ✅ **Ya justificado por el autor** — `adapter.go:29`: el pool sin cota es intencional
+   > para el sweep de status (explicado en el hilo). Verificado, no se re-marca.
+3. **Justification wrong or incomplete** → flag again, but **engage with the author's
+   argument**, never repeat the finding verbatim:
+   > 🔁 **Respuesta al autor** — el dev dice que el `%s` no rompe nada, pero
+   > `errors.Is(ErrNotFound)` en `service/x.go:112` sí depende del wrap. Sigue aplicando.
+4. **Never rubber-stamp**: a justification is not accepted just because it exists — it is
+   verified. And once a point is validly closed, never re-open it in later re-reviews.
+
+This check never blocks a PR; it changes what gets reported. Add a row
+`Justificaciones del autor honradas` to the validation table (✅ honored / ⚠️ could not
+read the conversation).
+
 ### Verdict system (ternary)
 
 Each check in the gate summary table uses three states:
@@ -1896,6 +1979,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | **go-bricks** | | |
 | Sin tipos reinventados | ✅/❌/⚠️ | |
 | rawQuery / SQL safety | ✅/❌/⚠️ | |
+| Sin llamados a stored procedures | ✅/❌ | BLOCKER si hay SP |
 | Límites de capa correctos | ✅/❌/⚠️ | |
 | Cableado de módulo | ✅/N/A | |
 | Patrones de BD | ✅/N/A | |
@@ -1924,6 +2008,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Oportunidades go-bricks | ✅/❌ | {N} encontradas |
 | **Scope** | | |
 | Scope contenido | ✅/❌ | |
+| Justificaciones del autor honradas | ✅/⚠️ | ⚠️ si no pude leer los comentarios del PR |
 
 </details>
 
@@ -2017,6 +2102,7 @@ constantes autodescriptivas.
 | **go-bricks** | | |
 | No reinvented types | ✅/❌/⚠️ | |
 | rawQuery / SQL safety | ✅/❌/⚠️ | |
+| No stored procedure calls | ✅/❌ | BLOCKER if any SP |
 | Layer boundaries | ✅/❌/⚠️ | |
 | Module wiring | ✅/N/A | |
 | DB patterns | ✅/N/A | |
@@ -2045,6 +2131,7 @@ constantes autodescriptivas.
 | go-bricks opportunities | ✅/❌ | {N} found |
 | **Scope** | | |
 | Scope contained | ✅/❌ | |
+| Author's prior justifications honored | ✅/⚠️ | ⚠️ if PR conversation unreadable |
 
 </details>
 
