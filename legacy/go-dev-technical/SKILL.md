@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.6.0"
+  version: "2.6.1"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -1220,10 +1220,27 @@ Rules for the table:
   comando: `gofmt -r 'oldName -> newName' -w ./...` o el rename del IDE (que además
   actualiza referencias en tests).
 
-En el cuerpo del reporte (fuera de la tabla) sólo van los nombres cuyo impacto
-excede el estilo — un nombre que **miente** sobre lo que el valor contiene, o una
-inconsistencia de léxico que va a propagarse a los siguientes PRs. Ésos sí como
-`Debe corregirse`, con el mismo formato de propuesta:
+**Ruteo de los hallazgos de nombres (IMPORTANTE)**: cuando la tabla tenga
+**al menos una fila real** de renombrado (algo distinto de la fila "todas las
+convenciones seguidas ✅"), esos hallazgos deben aparecer **también en la sección
+`Debe corregirse`** como un ítem de **sugerencia** — no quedarse enterrados en el
+`<details>`. La redacción es de recomendación, no de bloqueo: *"seguir una
+nomenclatura más clara y diciente"*, con la propuesta concreta. El `<details>` con
+la tabla completa se mantiene como el registro del barrido (incluye la verificación
+y los renombres masivos diferidos); la sección `Debe corregirse` lleva el resumen
+accionable para que el autor lo vea sin expandir nada.
+
+Formato del ítem en `Debe corregirse` (un bullet por hallazgo, o uno que agrupa
+varios cuando son del mismo tipo):
+
+- [ ] **`path/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}`
+  ({regla en una línea, p. ej. stuttering / acrónimo / palabra ruido}). Seguir una
+  nomenclatura más clara y diciente. *(sugerencia, no bloquea el merge)*
+
+Los nombres cuyo impacto **excede el estilo** — un nombre que **miente** sobre lo que
+el valor contiene, o una inconsistencia de léxico que se va a propagar a los próximos
+PRs — van igual en `Debe corregirse` pero con el fraseo reforzado (no como mera
+sugerencia estética), con el mismo formato de propuesta:
 
 > `[naming]` `external/processingcore.go:41` — el campo `HoldResponseCode` recibe el
 > `blockTypeKey`, no un código de respuesta: el nombre miente sobre el contenido.
@@ -1235,6 +1252,9 @@ The **Naming & conventions** table is ALWAYS present in the report, even when
 everything passes (with a "todas las convenciones seguidas ✅" row). When it
 passes, list in one line what you actually checked — receivers, `ctx` first,
 `error` last, acronyms, stuttering, aliases — so the author knows it wasn't skipped.
+When it does NOT pass, the `<details>` table still carries every row, **and** each
+real finding is surfaced up in `Debe corregirse` / `Should fix` as a `[naming]`
+suggestion per the routing rule above.
 
 #### 9b. Function & method signature design (SHOULD-FIX)
 
@@ -1736,6 +1756,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 - [ ] **`path/to/file.go:42`** — `[tag]` {descripción developer-friendly: qué está mal, qué pasa en runtime, cómo corregir}
 - [ ] **`path/to/file.go:80`** — `[tag]` {descripción}
+- [ ] **`path/to/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}` ({regla}). Seguir una nomenclatura más clara y diciente. *(sugerencia, no bloquea)* — incluir un bullet por cada fila real de la tabla de nombres
 
 ---
 
@@ -1851,6 +1872,7 @@ constantes autodescriptivas.
 
 - [ ] **`path/to/file.go:42`** — `[tag]` {developer-friendly description: what's wrong, runtime impact, how to fix}
 - [ ] **`path/to/file.go:80`** — `[tag]` {description}
+- [ ] **`path/to/file.go:24`** — `[naming]` suggestion: rename `{current}` → `{proposed}` ({rule}). Follow a clearer, more meaningful nomenclature. *(suggestion, non-blocking)* — one bullet per real row of the naming table
 
 ---
 
