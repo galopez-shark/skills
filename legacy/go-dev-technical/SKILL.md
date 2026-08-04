@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.6.1"
+  version: "2.6.2"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -1230,12 +1230,31 @@ la tabla completa se mantiene como el registro del barrido (incluye la verificac
 y los renombres masivos diferidos); la sección `Debe corregirse` lleva el resumen
 accionable para que el autor lo vea sin expandir nada.
 
-Formato del ítem en `Debe corregirse` (un bullet por hallazgo, o uno que agrupa
-varios cuando son del mismo tipo):
+Formato del ítem en `Debe corregirse` — cada hallazgo lleva su **propuesta como
+bloque `suggestion` de GitHub**, para que al pegarlo como comentario inline salga el
+botón *"Apply suggestion"* y el autor lo aplique con un click:
 
+````markdown
 - [ ] **`path/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}`
   ({regla en una línea, p. ej. stuttering / acrónimo / palabra ruido}). Seguir una
   nomenclatura más clara y diciente. *(sugerencia, no bloquea el merge)*
+  ```suggestion
+  {la línea path/file.go:24 completa, ya con el nombre corregido}
+  ```
+````
+
+Reglas del bloque `suggestion`:
+- El contenido es la **línea (o líneas) exacta(s) del diff ya corregida(s)** — GitHub
+  reemplaza la(s) línea(s) comentada(s) por lo que va dentro del bloque. Debe compilar
+  tal cual: copiá la línea original y cambiá sólo el identificador.
+- Sólo se convierte en botón *"Apply"* cuando el comentario se postea **inline sobre
+  esa línea** del PR; en un comentario general del PR se ve como bloque de código
+  normal. Indicá el `path:line` para que el revisor sepa dónde anclarlo.
+- **Renombre de un solo sitio** (una declaración local, un campo, un alias en un
+  archivo) → `suggestion` directo. **Renombre multi-sitio** (un tipo/función usado en
+  N archivos) → NO uses `suggestion` (arreglaría sólo la declaración y dejaría las
+  referencias rotas): dejalo en la tabla del `<details>` como seguimiento con el
+  comando `gofmt -r '{actual} -> {propuesto}' -w ./...`, y decilo explícito en el bullet.
 
 Los nombres cuyo impacto **excede el estilo** — un nombre que **miente** sobre lo que
 el valor contiene, o una inconsistencia de léxico que se va a propagar a los próximos
@@ -1756,7 +1775,11 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 - [ ] **`path/to/file.go:42`** — `[tag]` {descripción developer-friendly: qué está mal, qué pasa en runtime, cómo corregir}
 - [ ] **`path/to/file.go:80`** — `[tag]` {descripción}
-- [ ] **`path/to/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}` ({regla}). Seguir una nomenclatura más clara y diciente. *(sugerencia, no bloquea)* — incluir un bullet por cada fila real de la tabla de nombres
+- [ ] **`path/to/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}` ({regla}). Seguir una nomenclatura más clara y diciente. *(sugerencia, no bloquea)*
+  ```suggestion
+  {la línea file.go:24 completa, ya con el nombre corregido}
+  ```
+  _(un bullet por cada fila real de la tabla de nombres; `suggestion` sólo para renombres de un solo sitio — multi-sitio va a la tabla con `gofmt -r`)_
 
 ---
 
@@ -1872,7 +1895,11 @@ constantes autodescriptivas.
 
 - [ ] **`path/to/file.go:42`** — `[tag]` {developer-friendly description: what's wrong, runtime impact, how to fix}
 - [ ] **`path/to/file.go:80`** — `[tag]` {description}
-- [ ] **`path/to/file.go:24`** — `[naming]` suggestion: rename `{current}` → `{proposed}` ({rule}). Follow a clearer, more meaningful nomenclature. *(suggestion, non-blocking)* — one bullet per real row of the naming table
+- [ ] **`path/to/file.go:24`** — `[naming]` suggestion: rename `{current}` → `{proposed}` ({rule}). Follow a clearer, more meaningful nomenclature. *(suggestion, non-blocking)*
+  ```suggestion
+  {the full file.go:24 line, already with the corrected name}
+  ```
+  _(one bullet per real row of the naming table; `suggestion` only for single-site renames — multi-site goes to the table with `gofmt -r`)_
 
 ---
 
