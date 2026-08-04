@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.6.2"
+  version: "2.7.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -261,7 +261,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 6 | External calls | 2 | SHOULD-FIX |
 | 6b | Messaging / bus integration | 2 | BLOCKER |
 | 7 | Test patterns | 2 | SHOULD-FIX |
-| 8 / 8b | Reuse check, file & struct placement | 2 | SHOULD-FIX |
+| 8 / 8b / 8c | Reuse check, file & struct placement, file cohesion & minimalism | 2 | SHOULD-FIX |
 | 9 / 9b | Naming & API design, signature design | 3 | SHOULD-FIX |
 | 10 / 10b | Config completeness, version bump | 2 | NIT / SHOULD-FIX |
 | 11 | Error handling bugs | 3 | BLOCKER |
@@ -1043,6 +1043,82 @@ Flag:
 - **Query inline**: SQL string built inside `sql_repository.go` → extract to `queries.go` as `const`
 - **Mapper scattered**: Row → DTO conversion in `sql_repository.go` → extract to `mapper.go`
 - **Error in wrong layer**: error sentinel defined in `repository/` → move to `domain/errors.go`
+
+### 8c. File cohesion & minimalism (SHOULD-FIX)
+
+The goal is the **fewest `.go` files that still separate concerns**: each concern
+(mappers, constants, DTOs, errors, queries, wiring, shared utilities) lives in **one
+cohesive file per layer**, not scattered across micro-files. Fragmentation and
+junk-drawer files are both findings — one because it hides the concern across many
+files, the other because it hides many concerns in one file.
+
+**One canonical file per concern, per layer**:
+
+| Concern | Cohesive file | Layer |
+|---|---|---|
+| Domain model | `<entity>.go` | `domain/` |
+| Table metadata (`Entity[T]`) | `<entity>_entity.go` | `domain/` |
+| Error sentinels | `errors.go` | `domain/` |
+| Business constants | `constants.go` (or inside the domain file) | `domain/` |
+| Repository interface | `repository.go` | `repository/` |
+| SQL implementation | `sql_repository.go` | `repository/` |
+| Row→DTO mappers | `mapper.go` | `repository/` |
+| SQL as `const` (when the module separates them) | `queries.go` | `repository/` |
+| Business logic | `service.go` | `service/` |
+| Service / handler DTOs | `dto.go` | `service/`, `handlers/` |
+| HTTP handlers | `http.go` (+ `health.go`) | `handlers/` |
+| AMQP consumer | `<event>_handler.go` | `amqp/` |
+| Module wiring | `module.go` | module root |
+| Test data / mocks / helpers | `testdata_test.go` / `mocks_test.go` / `testing_helpers_test.go` | per layer |
+| Cross-cutting utility | `internal/plataform/` or `shared/<concern>/` named by the concern | shared |
+
+Both `queries.go`/`constants.go` (separate files) and inlining queries/constants into
+`sql_repository.go`/the domain file are valid — either is cohesive. Do not force one
+over the other.
+
+**What to flag (SHOULD-FIX)**:
+- **Fragmentation**: one concern spread over several files → consolidate. Constants in
+  4 files → `constants.go`; two mapper files → `mapper.go`; one tiny type per file when
+  they cohere → merge into the layer's canonical file.
+- **Junk-drawer names**: `utils.go`, `helpers.go`, `common.go`, `misc.go`, `base.go`,
+  a generic `handler.go` → rename to the file named after its one responsibility
+  (`http.go`, `mapper.go`, `response.go`, …). Same rule for `shared/`: a folder per
+  concern (`shared/errors`, `shared/pagination`), never `shared/utils`.
+- **Concern outside its layer**: a mapper living in `service/`, a DTO in
+  `repository/interface.go` (overlaps 8b).
+
+```bash
+# junk-drawer file names in the diff
+git diff origin/main...pr-<N> --stat | grep -E '/(utils|helpers|common|misc|base|handler)\.go'
+# same concern fragmented — e.g. several *mapper*/*const* files in one layer
+git diff origin/main...pr-<N> --name-only | grep -E '/(repository|service|handlers)/' \
+  | grep -iE 'map|const|dto|error' | sort
+```
+
+**How to report** — phrase the finding as the convention itself; **never name a
+reference project** in the finding. Say *what* file the concern belongs in and *why*
+(cohesion / one concern per file), not "matches project X".
+
+- File **rename / move** → a `git mv` command (GitHub's ```suggestion block applies to
+  line content, not file paths):
+  ```bash
+  git mv internal/modules/cards/handlers/handler.go \
+         internal/modules/cards/handlers/http.go
+  ```
+- **Consolidation** (many → one) → list the source files and the destination, with the
+  `git mv` for the rename and a note to move the remaining content in.
+- **Content misplaced inside a file** (a type in the wrong file, not the file itself) →
+  a ```suggestion block as in checks 8b / 9.
+
+Example finding (note: no reference-project name):
+
+> - [ ] **`internal/modules/cards/repository/card_mappers.go`** — `[layout]` sugerencia:
+>   los mappers Row→DTO se consolidan en `mapper.go` (un concern, un archivo por capa).
+>   Seguir una organización más cohesiva y minimalista. *(sugerencia, no bloquea)*
+>   ```bash
+>   git mv internal/modules/cards/repository/card_mappers.go \
+>          internal/modules/cards/repository/mapper.go
+>   ```
 
 ### 9. Naming & API design (SHOULD-FIX)
 
@@ -1827,6 +1903,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Construcción queries (builder+Entity vs const) | ✅/❌/N/A | |
 | Sin andamiaje muerto (Entity[T] usado) | ✅/❌/N/A | |
 | Ubicación archivos/structs | ✅/N/A | |
+| Cohesión y minimalismo de archivos | ✅/❌/N/A | |
 | Patrones handler | ✅/N/A | |
 | Llamadas externas httpclient | ✅/N/A | |
 | Integración bus (nombres, AutoAck, DLQ, idempotencia) | ✅/❌/⚠️/N/A | |
@@ -1947,6 +2024,7 @@ constantes autodescriptivas.
 | Query construction (builder+Entity vs const) | ✅/❌/N/A | |
 | No dead scaffolding (Entity[T] used) | ✅/❌/N/A | |
 | File/struct placement | ✅/N/A | |
+| File cohesion & minimalism | ✅/❌/N/A | |
 | Handler patterns | ✅/N/A | |
 | External calls httpclient | ✅/N/A | |
 | Bus integration (names, AutoAck, DLQ, idempotency) | ✅/❌/⚠️/N/A | |
