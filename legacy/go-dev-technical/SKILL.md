@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.8.0"
+  version: "2.9.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -223,7 +223,23 @@ what is broken** — then reason about what the toolchain cannot see. See
 
 ### Phase 1 — NKH1 standard (common:pr-review)
 
-1. **Sizing**: ≤400 LOC, ≤10 files, one problem per PR
+1. **Sizing**: ≤400 new LOC, ≤10 files, one problem per PR. **Count only new lines in
+   production `.go` files — exclude `_test.go` files from the 400-line budget** (tests
+   don't consume the size budget). Compute it explicitly, never eyeball the diff stat:
+   ```bash
+   # New production LOC (excludes tests) — this is what the ≤400 rule measures
+   git diff origin/main...pr-<N> --numstat -- '*.go' ':(exclude)*_test.go' | awk '{a+=$1} END{print a" new prod LOC"}'
+   # Test LOC (reported separately, NOT counted against 400)
+   git diff origin/main...pr-<N> --numstat -- '*_test.go' | awk '{a+=$1} END{print a" test LOC"}'
+   ```
+   Report both numbers in the header (e.g. "+180 prod / +420 test"). The ≤400 gate is on
+   the prod number.
+   **But tests being budget-free is NOT a license to pad**: the excluded tests must be
+   **business-scenario tests** (real cases: money moved / not moved, reversal applied /
+   not, in-doubt resolved, error paths that change the response) — NOT tests written only
+   to lift the coverage %. A PR that hides 400 lines of tautological coverage-padding
+   under the "tests don't count" rule fails check 15 (test quality). Tests earn their
+   exclusion by pinning a business contract; coverage-only tests do not.
 2. **Title**: Conventional Commit, ≤72 chars, no Jira ID in title
 3. **Security & PCI**: no secrets, PAN, CVV in code/logs/tests; tenant isolation
 4. **Correctness**: edge cases, error paths, money math (integer minor units)
@@ -1635,6 +1651,12 @@ Flag:
 
 Go beyond "tests exist" — verify tests are meaningful:
 
+- [ ] **Business-scenario tests, not coverage padding**: each test pins a real business
+      case (money moved / not moved, reversal applied / not, in-doubt resolved, an error
+      path that changes the response) — not a test written only to lift the coverage %.
+      This is the quality bar that earns tests their exclusion from the ≤400-line budget
+      (Phase 1 sizing): budget-free tests must document a business contract. Flag tests
+      that exist only to touch a line without asserting a meaningful outcome.
 - [ ] **Regression value**: would the test FAIL if the production code it targets were removed?
 - [ ] **No mock-only assertions**: test asserts on real behavior, not just that a mock was called
 - [ ] **Error paths covered**: not just happy path — test what happens when the DB is down, API returns 500, input is malformed
@@ -1878,9 +1900,13 @@ Target path (in order of preference):
 **Steps**:
 1. Resolve the temp dir (scratchpad if available, else `$TMPDIR`/`/tmp`).
 2. Write the full GFM report to `<tempdir>/pr-{PR_NUMBER}-review.md`.
-3. Give the user an OPENABLE reference, not just the raw path: a clickable
-   `file://<abs-path>` markdown link AND an open command — `code "<abs-path>"`
-   (VS Code) or `open "<abs-path>"` (macOS) — so they can open it in one click.
+3. **Try to open the file** for the user by running `code "<abs-path>"` (VS Code).
+   Whether or not that succeeds, the agent's chat response **MUST ALWAYS include the
+   open command verbatim** — `code "<abs-path>"` — plus a clickable `file://<abs-path>`
+   markdown link, so the user can open it in one click even when `code` is not on PATH.
+   Never leave only the bare path: the copy-paste command is mandatory in every review
+   response. (If `code` isn't available, offer `open "<abs-path>"` on macOS as the
+   fallback, but the `code` command stays in the message.)
 
 **Never** write review files inside the reviewed repo, and never `git add`/commit
 them. (This is distinct from PR *description* text, which is delivered inline in
@@ -1911,7 +1937,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 ```markdown
 ## Revisión PR #{number} — {title}
 
-📋 **{count} archivos** | **+{added} / -{removed} líneas** | **Riesgo**: {ALTO/MEDIO/BAJO} | **go-bricks**: v{version}
+📋 **{count} archivos** | **+{prodLOC} prod / +{testLOC} test líneas** (gate ≤400 sobre prod) | **Riesgo**: {ALTO/MEDIO/BAJO} | **go-bricks**: v{version}
 
 ### ❌ Bloqueadores
 
@@ -2034,7 +2060,7 @@ constantes autodescriptivas.
 ```markdown
 ## PR Review #{number} — {title}
 
-📋 **{count} files** | **+{added} / -{removed} lines** | **Risk**: {HIGH/MEDIUM/LOW} | **go-bricks**: v{version}
+📋 **{count} files** | **+{prodLOC} prod / +{testLOC} test lines** (≤400 gate on prod) | **Risk**: {HIGH/MEDIUM/LOW} | **go-bricks**: v{version}
 
 ### ❌ Blockers
 
