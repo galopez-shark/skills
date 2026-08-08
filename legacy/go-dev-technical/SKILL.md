@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.9.0"
+  version: "2.9.1"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
   role: specialist
@@ -1958,6 +1958,22 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 ### 🔧 Debe corregirse
 
+> **Regla dura de esta sección: todo ítem lleva su PROPUESTA CONCRETA, nunca solo el
+> problema.** Según el tipo de hallazgo:
+> - **Nombre de variable/función/tipo/constante** → dar el **nombre propuesto** + bloque
+>   ```suggestion``` con la línea ya corregida (renombre de un solo sitio) o `gofmt -r`
+>   (multi-sitio). Ver check 9.
+> - **Código en el archivo/capa equivocada** → dar el **`git mv` al `.go` que le
+>   corresponde** según la estructura de arquitectura (mappers → `mapper.go`, DTOs →
+>   `dto.go`, errores → `errors.go`, queries → `queries.go`, interfaz de repo →
+>   `repository.go`, config/wiring → `module.go`, handlers HTTP → `http.go`, etc. —
+>   ver checks 8b/8c). Si es contenido mal ubicado *dentro* de un archivo, usar
+>   ```suggestion```; si es el archivo entero, `git mv`.
+> - **Bug/error de runtime** → dar el diff before→after concreto (ver Phase 3).
+>
+> Un ítem que dice "mejorar el nombre", "reubicar esto" o "revisar la estructura" **sin la
+> propuesta concreta (nombre exacto / ruta destino / diff) NO está listo** — no se emite así.
+
 - [ ] **`path/to/file.go:42`** — `[tag]` {descripción developer-friendly: qué está mal, qué pasa en runtime, cómo corregir}
 - [ ] **`path/to/file.go:80`** — `[tag]` {descripción}
 - [ ] **`path/to/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}` ({regla}). Seguir una nomenclatura más clara y diciente. *(sugerencia, no bloquea)*
@@ -1965,6 +1981,10 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
   {la línea file.go:24 completa, ya con el nombre corregido}
   ```
   _(un bullet por cada fila real de la tabla de nombres; `suggestion` sólo para renombres de un solo sitio — multi-sitio va a la tabla con `gofmt -r`)_
+- [ ] **`path/to/file.go`** — `[layout]` mover `{Tipo/func}` a `{archivo destino}.go` para cumplir la estructura de la arquitectura ({razón: mappers en mapper.go / config en module.go / etc.}). Seguir una organización más cohesiva. *(sugerencia, no bloquea)*
+  ```bash
+  git mv internal/modules/<mod>/<capa>/<origen>.go internal/modules/<mod>/<capa>/<destino>.go
+  ```
 
 ---
 
@@ -2081,6 +2101,21 @@ constantes autodescriptivas.
 
 ### 🔧 Should fix
 
+> **Hard rule for this section: every item carries its CONCRETE PROPOSAL, never just the
+> problem.** By finding type:
+> - **Variable/function/type/constant name** → give the **proposed name** + a
+>   ```suggestion``` block with the corrected line (single-site) or `gofmt -r`
+>   (multi-site). See check 9.
+> - **Code in the wrong file/layer** → give the **`git mv` to the `.go` it belongs in**
+>   per the architecture layout (mappers → `mapper.go`, DTOs → `dto.go`, errors →
+>   `errors.go`, queries → `queries.go`, repo interface → `repository.go`, config/wiring
+>   → `module.go`, HTTP handlers → `http.go`, etc. — see checks 8b/8c). Content misplaced
+>   *inside* a file → ```suggestion```; a whole file → `git mv`.
+> - **Runtime bug** → give the concrete before→after diff (see Phase 3).
+>
+> An item that says "improve the name", "relocate this" or "review the structure" **without
+> the concrete proposal (exact name / destination path / diff) is NOT ready** — don't emit it.
+
 - [ ] **`path/to/file.go:42`** — `[tag]` {developer-friendly description: what's wrong, runtime impact, how to fix}
 - [ ] **`path/to/file.go:80`** — `[tag]` {description}
 - [ ] **`path/to/file.go:24`** — `[naming]` suggestion: rename `{current}` → `{proposed}` ({rule}). Follow a clearer, more meaningful nomenclature. *(suggestion, non-blocking)*
@@ -2088,6 +2123,10 @@ constantes autodescriptivas.
   {the full file.go:24 line, already with the corrected name}
   ```
   _(one bullet per real row of the naming table; `suggestion` only for single-site renames — multi-site goes to the table with `gofmt -r`)_
+- [ ] **`path/to/file.go`** — `[layout]` move `{Type/func}` to `{destination}.go` to comply with the architecture layout ({reason: mappers in mapper.go / config in module.go / etc.}). Follow a more cohesive organization. *(suggestion, non-blocking)*
+  ```bash
+  git mv internal/modules/<mod>/<layer>/<source>.go internal/modules/<mod>/<layer>/<dest>.go
+  ```
 
 ---
 
