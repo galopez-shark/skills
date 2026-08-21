@@ -1071,8 +1071,13 @@ Flag if:
 
 **Generic rule.** A go-bricks service usually keeps **cross-cutting reader repositories in a
 shared/platform package** (a package outside any single module — its location is
-project-specific: `internal/modules/shared/` in the canonical `mdw-welcome-project-go`,
-`internal/plataform/repository/` in zinli) that several modules reuse
+project-specific and its **name should follow check 9.5**: prefer a `platform` package or one
+named by concern, NOT a package literally named `shared`/`common`/`util`. The reference
+`mdw-welcome-project-go` groups helpers under the directory `internal/modules/shared/` with the
+real packages named by concern underneath (`pagination`, `tenants`, `errors`); zinli uses
+`internal/plataform/` — a misspelling of `platform`, pending a refactor — precisely to avoid a
+`shared`-named package flagged by lint. Prefer the correctly-spelled `platform`) that several
+modules reuse
 instead of each one re-reading the same domain tables. Before a module adds its **own**
 repository to read a domain table, verify whether a shared reader already covers that table and
 reuse it — together with any shared "locate/select from the returned aggregate" helper.
