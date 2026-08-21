@@ -967,6 +967,28 @@ Rules for this step:
 Apply these when writing or refactoring any repository layer. They are framework-level (go-bricks)
 and NOT tied to any one migration project.
 
+### 0. Reuse the shared reader before you write a new repository (do this FIRST)
+
+Before adding a module repository to read a domain table, check whether a **shared reader in the
+platform package already reads it** — the one other modules already reuse. Do not fork a parallel
+data-access stack.
+
+- **Look first**: a cross-module reader outside any single module (project-specific location, e.g.
+  zinli `internal/plataform/repository/customer.GetCustomer(tagPay, cardToken)` returning the
+  customer with its cards, plus `cardutils.FindCard(customer, token, activeOnly)` to locate one).
+  It reads the shared domain tables and is already consumed by the migrated modules
+  (accounts/operations/funds_transfer/…).
+- **If it lacks a column** the new flow needs (e.g. `SEQUENCE_NUMBER`, `CARD_PROGRAM`): **extend the
+  shared query + the shared DTO** — the change is additive and every consumer benefits. Do NOT build
+  a new `sql_repository.go` + Row struct + `ScanColumns` + `mapper.go` + a local DTO to re-read the
+  same tables. Well-built duplication is still duplication.
+- **A new dedicated reader is justified only** when it returns data the shared reader structurally
+  cannot (a genuinely different aggregate), not merely a couple of extra columns or a filter that a
+  consumer can apply on the returned aggregate.
+- This is exactly what the review skill `go-dev-technical` flags as a reuse violation (check 8a):
+  build it right here and the review is clean. Record the reuse in the PR ("Reutilizado sin
+  duplicar: …").
+
 ### 1. Prefer the typed query builder over raw SQL
 
 - Model each table as a typed descriptor `Entity[T]{ Name, Columns }` and build queries with the
