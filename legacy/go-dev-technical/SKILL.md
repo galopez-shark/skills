@@ -1069,41 +1069,43 @@ Flag if:
 
 #### 8a. Shared reader repositories — reuse before you fork (SHOULD-FIX, strong)
 
-`internal/plataform/repository/` holds **cross-module reader repositories** that other
-modules already reuse instead of each one re-reading the shared domain tables. The
-canonical one is `customer.GetCustomer(ctx, tagPay, cardToken) (*platdomain.CustomerDTO, error)`
-— it reads `ADMCONS_CUSTOMERS` / `ADMCONS_CARDS` / `ADMCONS_CARDS_TOKEN` / `ADMCONS_*_ACCOUNTS`
-and returns the customer with its cards; `cardutils.FindCard(customer, cardToken, activeOnly)`
-locates the card. **accounts, operations, funds_transfer and core_transactions_history all
-consume it.**
+**Generic rule.** A go-bricks service usually keeps **cross-cutting reader repositories in a
+shared/platform package** (a package outside any single module — commonly under the project's
+platform/common directory, e.g. `internal/<platform>/repository/`) that several modules reuse
+instead of each one re-reading the same domain tables. Before a module adds its **own**
+repository to read a domain table, verify whether a shared reader already covers that table and
+reuse it — together with any shared "locate/select from the returned aggregate" helper.
 
-Before a module adds its **own** repository to read those shared tables, it MUST reuse the
-shared reader. Building a parallel stack — a new `sql_repository.go` + Row struct +
-`scanColumns()` + `mapper.go` + a local `CardDTO`/`CustomerDTO` + a new reader interface — to
-read tables a `plataform/repository/*` reader already covers is a **reuse violation**, even
-when each piece is individually well-written (correct QueryBuilder, 100% tested). Well-built
-duplication is still duplication.
+Building a parallel stack — a new `sql_repository.go` + Row struct + `scanColumns()` +
+`mapper.go` + a local DTO + a new reader interface — to read tables a shared reader already
+covers is a **reuse violation**, even when each piece is individually well-written (correct
+QueryBuilder, fully tested). Well-built duplication is still duplication.
 
 **When the shared reader lacks a column** the new flow needs: **extend the shared query + the
-shared DTO** (`plataform/repository/customer` + `plataform/domain/dto.go`) — the addition is
-additive and every consumer benefits — then reuse `GetCustomer` + `FindCard`. Do NOT fork.
-This is the "extend before add" rule: same tables → extend the existing reader; a new reader
-is justified only when it returns data the shared one structurally cannot.
+shared DTO** — the change is additive and every consumer benefits — then reuse the shared
+reader. Do NOT fork. This is the "extend before add" rule: same tables → extend the existing
+reader; a new reader is justified only when it returns data the shared one structurally cannot.
 
 ```bash
-# Shared readers available to reuse
-grep -rn "func .*Get\(Customer\|Card\|Account\)\|NewSQL.*Repository" internal/plataform/repository/ --include="*.go" | grep -v _test.go
-# A module re-reading ADMCONS_* in its OWN repository → likely a reuse violation
-grep -rln "ADMCONS_CARDS\|ADMCONS_CUSTOMERS\|ADMCONS_CARDS_TOKEN" internal/modules/*/repository/ --include="*.go" | grep -v _test.go
+# Shared readers available to reuse — point at the project's platform/shared repository package
+grep -rnE "func .*\)(Get|Find|Read|List)[A-Za-z]*\(|New[A-Za-z]*Repository\(" <shared-repo-pkg> --include="*.go" | grep -v _test.go
+# A module re-reading a shared domain table in its OWN repository → candidate reuse violation
+grep -rln "<SHARED_TABLE_NAME>" internal/modules/*/repository/ --include="*.go" | grep -v _test.go
 ```
 
-**Report format**:
+**Example (zinli-business-be-go)** — the rule in the concrete project: the shared reader is
+`internal/plataform/repository/customer.GetCustomer(tagPay, cardToken)` returning a
+`CustomerDTO` with its cards, plus `cardutils.FindCard(customer, token, activeOnly)`; it reads
+the `ADMCONS_*` tables and is reused by accounts/operations/funds_transfer/core_transactions_history.
+PR #166 forked a parallel `cardRow`/`scanColumns`/`mapper`/`CardDTO` instead of extending the
+shared `CardDTO` with the two missing columns — a reuse violation.
 
-> `[reuse]` `modules/<m>/repository/sql_repository.go` — reimplementa la lectura de tarjeta
-> que ya provee `plataform/repository/customer.GetCustomer` + `cardutils.FindCard` (mismas
-> tablas `ADMCONS_*`, ya usado por accounts/operations/funds_transfer). Reusar el reader
-> compartido; si faltan columnas (`SEQUENCE_NUMBER`, `CARD_PROGRAM`), **extender** el query y
-> la `CardDTO` compartidos, no forkear un `cardRow`/`scanColumns`/`mapper`/`CardDTO` paralelos.
+**Report format** (generic):
+
+> `[reuse]` `modules/<m>/repository/sql_repository.go` — reimplementa una lectura que ya provee
+> el reader compartido `<shared>.Get<X>` (mismas tablas, ya reusado por otros módulos). Reusar
+> el reader compartido; si faltan columnas, **extender** el query y el DTO compartidos, nunca
+> forkear un `Row`/`scanColumns`/`mapper`/`DTO` paralelos.
 
 ### 8b. File & struct placement (SHOULD-FIX)
 
@@ -1141,11 +1143,11 @@ grep -rn "type.*Params\|type.*Request\|type.*Response" <module>/repository/ --in
 
 Flag:
 - **DTO in wrong file**: `repository/interface.go` has `UpdateCardStatusParams` mixed with the interface → move to `repository/dto.go` (repo-only params) or `domain/dto.go` (if service needs it too)
-- **Request/response in domain**: a service request/response struct (`SetPinRequest`, with `param:`/`json:`/`validate:` tags) defined in `domain/dto.go` → move to `service/in_out.go` (see `accounts/service/in_out.go` for the pattern: `GetBalanceRequest`, `PreventiveBlockRequest`, …)
+- **Request/response in domain**: a service request/response struct (the in/out of a service method, carrying HTTP binding tags `param:`/`query:`/`json:`/`validate:`) defined under `domain/` → move to the service package's in/out file (`service/in_out.go` by convention; grep a reference module to confirm the project's convention). *Example (zinli): `SetPinRequest` in `domain/dto.go` → `service/in_out.go`, matching the `accounts` module (`GetBalanceRequest`, `PreventiveBlockRequest`).*
 - **Query inline**: SQL string built inside `sql_repository.go` → extract to `queries.go` as `const`
 - **Mapper scattered**: Row → DTO conversion in `sql_repository.go` → extract to `mapper.go`
 - **Error in wrong layer**: error sentinel defined in `repository/` → move to `domain/errors.go`
-- **Module directory name**: a business/domain module prefixed against the dominant convention — the card/account/enroll domain modules are unprefixed (`accounts`, `cards`, `enrolls`, `operations`); do not introduce `core_cards` when `cards` matches `accounts` (its direct analog). Flag `internal/modules/core_cards/` → `internal/modules/cards/`. (`core_transactions_history` is the lone legacy exception, not the rule.)
+- **Module directory name against convention**: a new module whose directory name deviates from the naming pattern of its sibling domain modules (an inconsistent prefix/suffix). Grep the existing `internal/modules/*` names and match the dominant convention; flag the deviation with the corrective `git mv`. *Example (zinli): `core_cards` should be `cards` to match `accounts`/`enrolls`/`operations`; `core_transactions_history` is a lone legacy exception, not the rule.*
 
 ### 8c. File cohesion & minimalism (SHOULD-FIX)
 
