@@ -278,7 +278,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 6 | External calls | 2 | SHOULD-FIX |
 | 6b | Messaging / bus integration | 2 | BLOCKER |
 | 7 | Test patterns | 2 | SHOULD-FIX |
-| 8 / 8b / 8c | Reuse check, file & struct placement, file cohesion & minimalism | 2 | SHOULD-FIX |
+| 8 / 8a / 8b / 8c / 8d | Reuse check, shared-reader reuse, file & struct placement, file cohesion, file content matches responsibility | 2 | SHOULD-FIX |
 | 9 / 9b | Naming & API design, signature design | 3 | SHOULD-FIX |
 | 10 / 10b | Config completeness, version bump | 2 | NIT / SHOULD-FIX |
 | 11 | Error handling bugs | 3 | BLOCKER |
@@ -1232,6 +1232,60 @@ Example finding (note: no reference-project name):
 >          internal/modules/cards/repository/mapper.go
 >   ```
 
+### 8d. File content matches its declared responsibility (SHOULD-FIX)
+
+8b checks the **folder/layer**, 8c checks **cohesion + file name**. 8d closes the loop:
+**a file name is a contract about its content** — open every `.go` file the PR touches and
+verify what is inside is what the name promises. Content that does not belong is misplaced
+even when the file itself is well-written and its neighbours are correct. (This is the check
+that catches a mapper, a query, a business rule or a request struct that each individually
+"looks fine" but sits in the wrong file.)
+
+**Generic responsibility manifest** — names are per project (confirm against a reference
+module); the *responsibility* is the invariant:
+
+| File (canonical) | MUST contain only | MUST NOT contain |
+|---|---|---|
+| `domain/<entity>.go` / `dto.go` | business entities/models, framework-free | request/response DTOs, HTTP binding structs, SQL, `sql.Null*`, framework imports |
+| `domain/<entity>_entity.go` | `Entity[T]` column metadata for one table | logic, mappers, DTOs |
+| `domain/errors.go` | error sentinels/types | logic, DTOs |
+| `domain/constants.go` | business constants | logic, SQL |
+| `repository/repository.go` | the repository interface(s) | impl, SQL, structs with tags |
+| `repository/sql_repository.go` | the repository impl + query assembly | Row→DTO mappers, business rules, HTTP |
+| `repository/mapper.go` | Row structs + `scanColumns` + Row→DTO mappers | SQL text, business logic |
+| `repository/queries.go` (if used) | SQL as `const` | Go logic, mapping |
+| `service/service.go` | business logic | HTTP binding, raw SQL, `server`/`echo` imports |
+| `service/<dto|in_out>.go` | service request/response DTOs | business logic, DB Row structs |
+| `handlers/http.go` | HTTP binding → service delegation | business rules, SQL, DB access |
+| `handlers/<dto>.go` | HTTP binding / edge DTOs | business logic, domain entities |
+| `module.go` | dependency wiring + route/consumer registration | business logic, HTTP parsing, SQL |
+
+**Procedure** — for each `.go` file in the diff:
+```bash
+for f in $(git diff origin/main...pr-<N> --name-only -- '*.go' | grep -v _test.go); do
+  echo "== $f =="; git show pr-<N>:"$f" | grep -nE '^func |^type |^const |^var ' | head -40
+done
+```
+Classify each top-level declaration and ask: *does this belong in a file with this name/role?*
+Flag the mismatch with the concrete move (```suggestion``` for content inside a file, `git mv`
+for a whole misnamed file — same as 8b/8c).
+
+**What to flag (examples of content-in-wrong-file):**
+- A `SetPinRequest` (service in/out) sitting in `domain/…` → belongs in the service layer's DTO file.
+- A Row→DTO mapper or `scanColumns` defined inside `sql_repository.go` → `mapper.go`.
+- A raw SQL string built inside `service.go` → repository (`queries.go` / builder in `sql_repository.go`).
+- Business branching inside `handlers/http.go` or `module.go` → service layer.
+- `sql.Null*` fields on a struct in `domain/` → the Row struct in `repository/mapper.go`.
+
+**Report format**:
+
+> `[content]` `service/service.go:88` — arma un `SELECT ...` inline en la capa service; el SQL
+> vive en el repository (`queries.go`/builder en `sql_repository.go`). El archivo `service.go`
+> debe contener solo lógica de negocio.
+
+This composes with 8a: a file whose content **duplicates a shared reader** is both an 8a reuse
+violation and an 8d misplacement — report it once, under 8a, with the reuse fix.
+
 ### 9. Naming & API design (SHOULD-FIX)
 
 Naming is not cosmetics — a wrong name is a wrong mental model that every future
@@ -2084,6 +2138,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Sin andamiaje muerto (Entity[T] usado) | ✅/❌/N/A | |
 | Ubicación archivos/structs | ✅/N/A | |
 | Cohesión y minimalismo de archivos | ✅/❌/N/A | |
+| Contenido de cada archivo = su responsabilidad | ✅/❌/N/A | |
 | Patrones handler | ✅/N/A | |
 | Llamadas externas httpclient | ✅/N/A | |
 | Integración bus (nombres, AutoAck, DLQ, idempotencia) | ✅/❌/⚠️/N/A | |
@@ -2226,6 +2281,7 @@ constantes autodescriptivas.
 | No dead scaffolding (Entity[T] used) | ✅/❌/N/A | |
 | File/struct placement | ✅/N/A | |
 | File cohesion & minimalism | ✅/❌/N/A | |
+| File content matches its responsibility | ✅/❌/N/A | |
 | Handler patterns | ✅/N/A | |
 | External calls httpclient | ✅/N/A | |
 | Bus integration (names, AutoAck, DLQ, idempotency) | ✅/❌/⚠️/N/A | |
