@@ -1067,6 +1067,44 @@ Flag if:
 - A new DTO duplicates fields from an existing shared type
 - A helper function reimplements something in `internal/plataform/`
 
+#### 8a. Shared reader repositories — reuse before you fork (SHOULD-FIX, strong)
+
+`internal/plataform/repository/` holds **cross-module reader repositories** that other
+modules already reuse instead of each one re-reading the shared domain tables. The
+canonical one is `customer.GetCustomer(ctx, tagPay, cardToken) (*platdomain.CustomerDTO, error)`
+— it reads `ADMCONS_CUSTOMERS` / `ADMCONS_CARDS` / `ADMCONS_CARDS_TOKEN` / `ADMCONS_*_ACCOUNTS`
+and returns the customer with its cards; `cardutils.FindCard(customer, cardToken, activeOnly)`
+locates the card. **accounts, operations, funds_transfer and core_transactions_history all
+consume it.**
+
+Before a module adds its **own** repository to read those shared tables, it MUST reuse the
+shared reader. Building a parallel stack — a new `sql_repository.go` + Row struct +
+`scanColumns()` + `mapper.go` + a local `CardDTO`/`CustomerDTO` + a new reader interface — to
+read tables a `plataform/repository/*` reader already covers is a **reuse violation**, even
+when each piece is individually well-written (correct QueryBuilder, 100% tested). Well-built
+duplication is still duplication.
+
+**When the shared reader lacks a column** the new flow needs: **extend the shared query + the
+shared DTO** (`plataform/repository/customer` + `plataform/domain/dto.go`) — the addition is
+additive and every consumer benefits — then reuse `GetCustomer` + `FindCard`. Do NOT fork.
+This is the "extend before add" rule: same tables → extend the existing reader; a new reader
+is justified only when it returns data the shared one structurally cannot.
+
+```bash
+# Shared readers available to reuse
+grep -rn "func .*Get\(Customer\|Card\|Account\)\|NewSQL.*Repository" internal/plataform/repository/ --include="*.go" | grep -v _test.go
+# A module re-reading ADMCONS_* in its OWN repository → likely a reuse violation
+grep -rln "ADMCONS_CARDS\|ADMCONS_CUSTOMERS\|ADMCONS_CARDS_TOKEN" internal/modules/*/repository/ --include="*.go" | grep -v _test.go
+```
+
+**Report format**:
+
+> `[reuse]` `modules/<m>/repository/sql_repository.go` — reimplementa la lectura de tarjeta
+> que ya provee `plataform/repository/customer.GetCustomer` + `cardutils.FindCard` (mismas
+> tablas `ADMCONS_*`, ya usado por accounts/operations/funds_transfer). Reusar el reader
+> compartido; si faltan columnas (`SEQUENCE_NUMBER`, `CARD_PROGRAM`), **extender** el query y
+> la `CardDTO` compartidos, no forkear un `cardRow`/`scanColumns`/`mapper`/`CardDTO` paralelos.
+
 ### 8b. File & struct placement (SHOULD-FIX)
 
 Every struct, type, and file must live in the folder that matches its responsibility.
@@ -1076,7 +1114,8 @@ Misplaced types create confusing imports and break the module's layering contrac
 
 | Type | Belongs in | NOT in |
 |------|-----------|--------|
-| DTOs for API request/response (`json:` tags) | `domain/dto.go` | `repository/`, `service/`, `handlers/` |
+| Service request/response DTOs (the in/out of a service method — `param:`/`query:`/`json:`/`validate:` tags) | `service/in_out.go` | `domain/dto.go`, `handlers/` |
+| Pure domain entities / business DTOs (no HTTP binding tags) | `domain/dto.go` | `service/`, `repository/` |
 | DTOs for repository input params (write args) | `repository/dto.go` if repo-only; `domain/dto.go` if service also uses it | `repository/interface.go` (mixed with interface def) |
 | Row structs for DB scan (`sql.Null*`) | `repository/mapper.go` | `domain/`, `service/` |
 | Entity structs for DB writes (column metadata) | `domain/entity.go` | `repository/` (unless repo-internal only) |
@@ -1102,9 +1141,11 @@ grep -rn "type.*Params\|type.*Request\|type.*Response" <module>/repository/ --in
 
 Flag:
 - **DTO in wrong file**: `repository/interface.go` has `UpdateCardStatusParams` mixed with the interface → move to `repository/dto.go` (repo-only params) or `domain/dto.go` (if service needs it too)
+- **Request/response in domain**: a service request/response struct (`SetPinRequest`, with `param:`/`json:`/`validate:` tags) defined in `domain/dto.go` → move to `service/in_out.go` (see `accounts/service/in_out.go` for the pattern: `GetBalanceRequest`, `PreventiveBlockRequest`, …)
 - **Query inline**: SQL string built inside `sql_repository.go` → extract to `queries.go` as `const`
 - **Mapper scattered**: Row → DTO conversion in `sql_repository.go` → extract to `mapper.go`
 - **Error in wrong layer**: error sentinel defined in `repository/` → move to `domain/errors.go`
+- **Module directory name**: a business/domain module prefixed against the dominant convention — the card/account/enroll domain modules are unprefixed (`accounts`, `cards`, `enrolls`, `operations`); do not introduce `core_cards` when `cards` matches `accounts` (its direct analog). Flag `internal/modules/core_cards/` → `internal/modules/cards/`. (`core_transactions_history` is the lone legacy exception, not the rule.)
 
 ### 8c. File cohesion & minimalism (SHOULD-FIX)
 
