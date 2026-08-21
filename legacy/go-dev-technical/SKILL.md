@@ -1070,8 +1070,9 @@ Flag if:
 #### 8a. Shared reader repositories — reuse before you fork (SHOULD-FIX, strong)
 
 **Generic rule.** A go-bricks service usually keeps **cross-cutting reader repositories in a
-shared/platform package** (a package outside any single module — commonly under the project's
-platform/common directory, e.g. `internal/<platform>/repository/`) that several modules reuse
+shared/platform package** (a package outside any single module — its location is
+project-specific: `internal/modules/shared/` in the canonical `mdw-welcome-project-go`,
+`internal/plataform/repository/` in zinli) that several modules reuse
 instead of each one re-reading the same domain tables. Before a module adds its **own**
 repository to read a domain table, verify whether a shared reader already covers that table and
 reuse it — together with any shared "locate/select from the returned aggregate" helper.
@@ -1116,8 +1117,9 @@ Misplaced types create confusing imports and break the module's layering contrac
 
 | Type | Belongs in | NOT in |
 |------|-----------|--------|
-| Service request/response DTOs (the in/out of a service method — `param:`/`query:`/`json:`/`validate:` tags) | `service/in_out.go` | `domain/dto.go`, `handlers/` |
-| Pure domain entities / business DTOs (no HTTP binding tags) | `domain/dto.go` | `service/`, `repository/` |
+| HTTP binding / edge DTOs (request binding `param:`/`query:`/`json:`, response envelopes) | the handlers layer's DTO file (`handlers/dto.go`) | `domain/`, `service/` |
+| Service request/response DTOs (the in/out of a service method) | the service layer's DTO file — **file name is project-specific**: `service/dto.go` in the canonical `mdw-welcome-project-go`; `service/in_out.go` in some services (zinli). Grep a reference module to confirm | `domain/` |
+| Pure domain entities / business models (framework-free) | the domain layer — `domain/<entity>.go` in the reference; `domain/dto.go` in some services | `service/`, `repository/`, `handlers/` |
 | DTOs for repository input params (write args) | `repository/dto.go` if repo-only; `domain/dto.go` if service also uses it | `repository/interface.go` (mixed with interface def) |
 | Row structs for DB scan (`sql.Null*`) | `repository/mapper.go` | `domain/`, `service/` |
 | Entity structs for DB writes (column metadata) | `domain/entity.go` | `repository/` (unless repo-internal only) |
@@ -1143,7 +1145,7 @@ grep -rn "type.*Params\|type.*Request\|type.*Response" <module>/repository/ --in
 
 Flag:
 - **DTO in wrong file**: `repository/interface.go` has `UpdateCardStatusParams` mixed with the interface → move to `repository/dto.go` (repo-only params) or `domain/dto.go` (if service needs it too)
-- **Request/response in domain**: a service request/response struct (the in/out of a service method, carrying HTTP binding tags `param:`/`query:`/`json:`/`validate:`) defined under `domain/` → move to the service package's in/out file (`service/in_out.go` by convention; grep a reference module to confirm the project's convention). *Example (zinli): `SetPinRequest` in `domain/dto.go` → `service/in_out.go`, matching the `accounts` module (`GetBalanceRequest`, `PreventiveBlockRequest`).*
+- **Request/response in the wrong layer**: the rule is about the **layer, not the file name**. A service request/response (in/out of a service method) or an HTTP binding struct (`param:`/`query:`/`json:`/`validate:`) defined under `domain/` is misplaced — request/response and edge DTOs belong in the **service and handlers layers**, `domain/` stays framework-free (business entities, DB entity metadata, errors, constants only). Whether that file is called `dto.go` or `in_out.go` is irrelevant; what matters is that it is **not in `domain/`**. *Example (zinli): `SetPinRequest` lives in `domain/dto.go` → move to the service layer (as `accounts` does).*
 - **Query inline**: SQL string built inside `sql_repository.go` → extract to `queries.go` as `const`
 - **Mapper scattered**: Row → DTO conversion in `sql_repository.go` → extract to `mapper.go`
 - **Error in wrong layer**: error sentinel defined in `repository/` → move to `domain/errors.go`
