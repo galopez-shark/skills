@@ -1,12 +1,12 @@
 ---
 name: go-dev-technical
-description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main). Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, and stuttering/noise-word/misleading identifiers."
+description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name — and then reviews design depth: leaked decisions re-decided at N sites, shallow interfaces carrying pass-through params, DRY violations with no single source of truth, and Uber-Go-Style-Guide idiom breaks the linters miss; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main). Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, stuttering/noise-word/misleading identifiers, information leakage (one decision with N homes and M authorities), hypothetical seams (a param nil in every test), hand-synced parallel constant lists, copy-pasted module bootstrap, and unsafe Go idioms (mutex copied by value, panic in a request path, os.Exit outside main)."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.9.1"
+  version: "2.10.0"
   domain: review
-  triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go
+  triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
   scope: code-review
   output-format: report
@@ -115,6 +115,9 @@ SUBCOMANDOS
                                   patrones DB/handler, reuso, ubicacion de archivos
       Fase 3  Correctitud         errores, concurrencia+tiempo, leaks, fail-closed,
                                   calidad de tests, NOMBRES, firmas, modernizacion
+      Fase 3b Diseno y DRY        modulos shallow, fugas de decision, params
+                                  pass-through, duplicacion sin fuente de verdad,
+                                  idioms de Go (Uber). Todo hallazgo LLEVA CONTEO.
       Fase 4  Descubrimiento      que ofrece go-bricks que el PR no esta usando
       Fase 5  Scope y evidencia   un solo concern, todo hallazgo con file:line
       Salida: <tmp>/pr-<N>-review.md  (markdown pegable en el PR)
@@ -145,6 +148,13 @@ QUE ATRAPA (los que duelen)
             fail-open, tests tautologicos, ramas de error sin cubrir.
   CAPAS     service que importa server, handler que toca database, net/http o
             sql.DB crudos en vez de go-bricks.
+  DISENO    una misma decision resuelta en N sitios con M autoridades distintas
+            (cambiarla obliga a tocar los N); seam hipotetico: parametro enhebrado
+            por 4 niveles y nil en 128 tests; concerns fusionados (telemetria solo
+            alcanzable via cifrado -> quien no cifra pierde metricas, sin fallar).
+  DRY       clones justo por debajo del threshold de dupl (verde no prueba nada);
+            dos listas paralelas sincronizadas a mano (55 codigos vs 44 mensajes);
+            bootstrap de modulo copiado con el mismo string de error 6 veces.
 
 REGLAS DURAS
   - Fase 0 SIEMPRE: no se opina sobre un diff sin compilarlo y correrle los tests.
@@ -153,6 +163,10 @@ REGLAS DURAS
   - Lo que no se pudo verificar es (warn) NO VERIFICADO, nunca (ok).
   - Paridad legacy gana sobre estetica: un nombre que replica el contrato Java
     se respeta y se documenta, no se reporta.
+  - Fase 3b sin numeros no existe: un hallazgo de diseno sin conteo de sitios /
+    autoridades / evidencia de costo en git es opinion, y no se emite.
+  - "Duplication is far cheaper than the wrong abstraction": duplicacion chica y
+    local se puede TOLERAR, y decirlo es un resultado valido de la revision.
 ```
 
 ## How to get the diff (MANDATORY — never guess the branch)
@@ -210,6 +224,11 @@ Antes de empezar, rechazar estos atajos mentales:
 | "Tiene 95% de cobertura" | El % no dice QUÉ rama falta, y suele faltar la de error | `go tool cover -func` + bloques con 0 hits |
 | "`gh` falló, salto ese check" | Un check no verificable es ⚠️, nunca ✅ | Fallback a `git log` y marcar ⚠️ con la razón |
 | "El nombre es cuestión de gusto" | Un nombre equivocado propaga un modelo mental equivocado | Google Go Style Guide es el árbitro, no la preferencia |
+| "El diseño es subjetivo, no lo toco" | Una decisión con 11 sitios y 3 autoridades es un hecho medible, no una opinión | Fase 3b: contar sitios y autoridades (19.0) antes de opinar o de callarse |
+| "`dupl` pasó en verde" | Los clones hechos a mano quedan justo por debajo del threshold configurado | Re-correr `dupl -threshold 40` y comparar con el threshold del repo |
+| "Esto está duplicado, hay que abstraerlo" | La abstracción equivocada es más cara que la duplicación | Guard 20e: ¿misma razón de cambio? ¿la abstracción ya existe? Si no → tolerar y decirlo |
+| "Es un módulo grande, hay que partirlo" | Tamaño ≠ shallow; una interfaz de 3 métodos sobre 1800 líneas es el objetivo | Medir la interfaz contra lo que esconde, no las líneas (19e) |
+| "Consolido el flujo de dinero, es solo refactor" | Certeza, reversa y resolución de estado son reglas de negocio, no forma | Verificación de paridad rama por rama contra el legacy, o se difiere |
 
 ---
 
@@ -256,6 +275,13 @@ or escape the QueryBuilder unsafely.
 
 Correctness bugs and code smells linters miss, plus API/naming design.
 
+### Phase 3b — Design depth & duplication (checks 19-21)
+
+What Phases 2-3 cannot see: code that compiles and passes but is expensive to own —
+a decision with N homes (19), a fact with no single source of truth (20), a non-idiomatic
+Go construct that survived the linters (21). **Every finding here needs a count**, or it
+is an opinion, not a finding.
+
 ### Phase 4 — go-bricks discovery
 
 Actively explore go-bricks source for utilities the PR COULD use but doesn't.
@@ -290,6 +316,9 @@ Not about blocking — about leveraging the framework's full potential.
 | 17 | Scope containment | 5 | SHOULD-FIX |
 | 18 | Evidence-based findings | 5 | MANDATORY |
 | 18b | Honor author's prior justifications | 5 | MANDATORY |
+| 19 / 19a-19f | Module depth & information leakage (leaked decision, shallow interface & pass-through params, temporal decomposition, fused concerns) | 3b | SHOULD-FIX |
+| 20 / 20a-20f | DRY — one authoritative representation (code clones, parallel lists, copy-pasted bootstrap, cost evidence, over-application guard) | 3b | SHOULD-FIX |
+| 21 / 21a-21c | Go idiom safety net (Uber Go Style Guide) | 3b | BLOCKER / SHOULD-FIX / NIT |
 
 ---
 
@@ -1804,6 +1833,550 @@ target construct.
 
 ---
 
+## Design depth & duplication (Phase 3b — checks 19-21)
+
+Phases 2 and 3 catch code that is **wrong**: an injection vector, a swallowed error, a
+leaked goroutine. Phase 3b catches code that compiles, passes, and is still **expensive
+to own** — a decision that lives in nine places, a fact with no single source of truth,
+an interface that hides nothing. These are the findings that make the *next* PR slow.
+
+Three lenses, deliberately kept separate because the fix differs:
+
+| Check | Lens | Question it asks |
+|---|---|---|
+| 19 | Deep vs. shallow modules (Ousterhout) | Does this interface reduce what the caller must know — and does this decision live in one place? |
+| 20 | DRY (Hunt & Thomas) | Does this **fact** have one authoritative representation? |
+| 21 | Uber Go Style Guide | Is this idiomatic, safe Go at the function/struct level? |
+
+**They are not a hierarchy and they do not substitute for each other.** A module can be
+deep and still copy a `sync.Mutex` by value (19 ✅ / 21 ❌). A module can have zero
+duplicated lines and still leak one decision into eleven sites (20 ✅ / 19 ❌). Report a
+finding under the lens that names its actual cause, once — never the same finding three
+times under three vocabularies.
+
+**Evidence rule (inherited from check 18, non-negotiable here).** Phase 3b is the easiest
+phase in this skill to fill with taste. A design finding without a **count** is an
+opinion:
+
+- 19 needs the **number of sites** that re-decide the thing, and the **number of distinct
+  authorities** among them.
+- 20 needs the **cost already paid** — a fix that landed twice, two counters that don't
+  match, a module that silently skipped the block.
+- 21 needs `file:line` and the concrete runtime consequence.
+
+No count, no finding. And per the Should-fix rule, every Phase 3b item carries a concrete
+proposal: **which file/module should own it**, not "consider consolidating".
+
+---
+
+### 19. Module depth & information leakage (SHOULD-FIX)
+
+A module is **deep** when its interface is small relative to the complexity it hides —
+Unix `open`/`read`/`write`/`close` over tens of thousands of lines of kernel. It is
+**shallow** when the interface is nearly as tall as the implementation: the caller must
+understand almost as much to *use* it as to *rewrite* it. Depth is measured against the
+caller's cognitive load, not against how much the author wrote.
+
+#### 19.0 Procedure — name the decision, then count its homes (MANDATORY)
+
+For each concern the diff touches, run this loop. It is cheap and it is what separates a
+finding from a vibe:
+
+1. **Name the decision in one question.** "What HTTP status does this business code map
+   to?" · "Did the money move?" · "Is this customer's card eligible?" · "What must every
+   module initialize?"
+2. **Grep for its authorities** — the symbols that answer it:
+   ```bash
+   # every symbol that decides the thing, across the repo (not just the diff)
+   grep -rn "HTTPStatusFromRC\|appErr\.Code\|http\.Status[A-Z]" --include='*.go' internal/ \
+     | grep -v _test.go
+   ```
+3. **Count**: how many **sites** answer it, and how many **distinct authorities** they
+   use. One site → fine. N sites, one authority → acceptable duplication of a *call*.
+   **N sites, 2+ authorities → leak**: nothing enforces which one wins.
+4. **Ask the deletion test**: if this helper vanished, would a caller have to re-derive
+   the decision, or just re-type a call? Re-derive → the module was load-bearing and
+   should be one funnel. Re-type → it is a shallow helper, and consolidating it buys
+   little (do not report).
+5. **Name the destination** — the package/file that should own it (`internal/plataform/`,
+   a new module, an existing deep function). No destination → not ready to emit.
+
+#### 19a. Leaked decision — one question answered at N sites (SHOULD-FIX, strong)
+
+The load-bearing form of this check. **Information leakage** is one design decision spread
+across modules that should be independent, so a single conceptual change forces N edits.
+Note the trap: there may be **no duplicated block a linter would catch** — the duplication
+is of *decision*, re-spelled slightly differently at each site.
+
+Flag when **all three** hold:
+
+- [ ] The same question is answered at **≥3 sites**, and at least **2 distinct
+      authorities** exist for it (e.g. a mapper function at one site, a hardcoded literal
+      at another, a struct field at a third)
+- [ ] Changing the rule once requires touching every site — and there is git evidence it
+      already had to (see 20d)
+- [ ] A destination exists that could own the whole sequence end-to-end and return a
+      finished result
+
+Highest-yield shapes to look for in a go-bricks service:
+
+```bash
+# 1. The response tail: is it assembled per-handler, or owned by one funnel?
+grep -rn "NewResult\|ctx.JSON\|c.JSON" --include='*.go' internal/modules/*/handlers/ \
+  internal/modules/*/middleware/ | wc -l
+# Count DISTINCT exit conventions — 2+ (Result and ctx.JSON) means middlewares bypass
+# whatever the handlers agreed on.
+
+# 2. Error rendering: how many functions turn an error into a response body?
+grep -rn "func.*Error.*Response\|func Write.*Error\|func.*ErrorResponse" \
+  --include='*.go' internal/ | grep -v _test.go
+
+# 3. Business-code construction outside the layer that owns business rules
+grep -rn "SuccessCode\|Code:.*bussines\.\|Message:.*bussines\." \
+  --include='*.go' internal/modules/*/repository/
+# A repository building business rc/message = the persistence layer deciding business
+# outcome. Leak, and a layer-boundary smell (check 2) at the same time.
+```
+
+**How to phrase it.** Not "this is duplicated" (that is check 20) but: *"the decision
+`X` has N homes and M authorities; the rule cannot be changed in one place"*. The fix is
+never "extract a helper" — it is **one module that owns the sequence and returns the
+finished thing**, so the caller's job shrinks to one line of business plus one return.
+
+#### 19b. Shallow interface & pass-through parameters (SHOULD-FIX)
+
+A parameter, field or method that is only **forwarded** — it never decides anything at the
+level that declares it — makes its module shallower than it looks: the interface grew to
+serve another layer's needs, not its own.
+
+**The nil-in-tests test — the single most decisive heuristic in this check.** A seam that
+exists for substitutability but is never substituted is not a seam; it is a tax every
+reader pays. Quantify it:
+
+```bash
+# Pick the suspicious param type (e.g. httpclient.Client, a *sql.DB, a logger passed per call)
+T='httpclient.Client'
+grep -rn "$T" --include='*.go' internal/ | grep -v _test.go | wc -l   # non-test mentions
+grep -rn "$T" --include='*.go' internal/ | grep -c "func "            # signatures carrying it
+# Real constructions of the thing (adapters that could differ):
+grep -rn "$T *=\|New.*$T\|$T{" --include='*.go' internal/ | grep -v _test.go
+# Call sites that pass nil for it (tests that never exercise the seam):
+grep -rn ", *nil)" --include='*_test.go' internal/ | wc -l
+```
+
+Verdict table:
+
+| Non-test mentions | Real implementations | `nil` at call sites | Verdict |
+|---:|---:|---:|---|
+| many | **1** | many | **Hypothetical seam** → SHOULD-FIX: adapter owns it at construction |
+| many | 2+ (prod + mock, both exercised) | few | Real seam → leave alone |
+| few | 1 | 0 | Not worth a finding |
+
+Also flag:
+
+- [ ] **Threaded through ≥3 call levels** without any level inspecting it (handler holds
+      it only to forward to service, service only to forward to client)
+- [ ] A **string parameter nobody validates** on the way down (`authHeader string` passed
+      four levels and never parsed) — either the adapter owns it or a type should
+- [ ] **Transport policy inside a business service** — a service formatting HTTP headers,
+      picking hosts, or building correlation IDs. That belongs to the adapter that owns
+      the transport detail. This is also the DIP violation: the high-level module depends
+      on the concrete client instead of a domain abstraction it defines
+- [ ] **Two conventions coexisting in one repo** for the same thing (one service holds the
+      client as a field, another takes it as a per-call param). Report the *inconsistency*
+      and name which convention wins — the repo already voted with the majority
+- [ ] **Interface height vs implementation depth**: an interface whose parameter list
+      encodes wiring rather than intent, over an implementation of many hundreds of lines.
+      Shrinking it is not a move, it is a **deletion**: name the count of arguments and
+      mentions that disappear
+
+**Conflict rule.** If a project `CLAUDE.md`, ADR, or migration checklist *mandates* the
+pass-through (some parity-driven checklists do), **do not report it as a defect**. Report
+it as a documented friction: cite the rule, cite the counter-evidence (the nil count, the
+majority convention), and recommend reopening the rule. Never silently review against a
+rule the repo does not have — and never silently against the repo's own rule either.
+
+#### 19c. Temporal decomposition — split by *when*, not by *what*
+
+The usual root cause behind 19a. Modules carved along the runtime timeline ("first
+validate, then encrypt, then observe, then write") instead of along the knowledge each
+piece owns. Each step becomes a mini-helper, and because the *sequence* is what actually
+carries the knowledge, every entry point replays it.
+
+Symptom to grep for — the same ordered call chain appearing at many sites:
+
+```bash
+# Take the 3-4 call sequence you saw in one handler and count how many places replay it
+grep -rn -A4 "ValidateError(" --include='*.go' internal/modules/*/handlers/ \
+  | grep -c "EncryptedResponse"
+```
+
+- [ ] ≥3 sites replay the same ordered sequence of ≥3 calls → the sequence, not its steps,
+      is the module. Propose one entry point that runs it internally
+- [ ] Helper names that describe **phases** (`validate*`, `prepare*`, `finalize*`,
+      `postProcess*`) rather than knowledge, each called in fixed order by every caller
+
+#### 19d. Fused concerns — one switch turns off two things
+
+A specific, high-yield leak: two independent concerns welded into one function, so a
+module that legitimately opts out of concern A silently loses concern B.
+
+```bash
+# Is observability reachable only through some other concern?
+grep -rn "func observe\|func.*Metric\|func.*Telemetry" --include='*.go' internal/plataform/
+# For each, find its callers — if there is exactly ONE and it is an unrelated concern
+# (encryption, serialization, auth), the concerns are fused.
+grep -rn "observeResponse\|recordMetric" --include='*.go' internal/ | grep -v _test.go
+```
+
+- [ ] A cross-cutting concern (metric, span, audit log) reachable **only** through an
+      unrelated one (encryption, caching, serialization)
+- [ ] Any module that skips the wrapper therefore skips the cross-cutting concern — and
+      **nothing fails** when it does. Name the endpoints currently flying blind
+- [ ] A primitive speaking a vocabulary from a layer above it (a crypto helper minting
+      *business* error codes, a repository minting business messages). The primitive
+      should return its own typed failure; the layer that owns the vocabulary translates
+
+#### 19e. When NOT to report (read before emitting anything from 19)
+
+Deleting a seam is cheap to propose and expensive to be wrong about. Do **not** report:
+
+- **A module that is already deep** — small interface, large hidden implementation, even
+  if the implementation is long. Length is not shallowness. A 3-method interface over
+  1800 well-factored lines is the *goal*
+- **A seam with two genuinely exercised adapters** (prod + mock, or two vendors) — that is
+  ports & adapters working as intended
+- **Variation mandated by legacy parity** — when the same semantic condition legitimately
+  yields different codes per endpoint because a Java contract says so, that variation must
+  survive as a **parameter**. Say so: the resulting interface will not be tiny, and that
+  is the honest outcome, not a failed refactor. Findings like this are **speculative** —
+  mark them as such rather than dressing them up
+- **Money-touching consolidation without parity verification.** If the sequence decides
+  whether funds moved, reversed, or are in doubt, the finding must carry the instruction
+  to verify each branch against the legacy source before moving it. Never propose a
+  money-path consolidation as a mechanical refactor
+- **Anything you could not count.** Went to grep, got noise, moved on → it is not a
+  finding, and it is not a `(warn)` either. Silence
+
+Confidence label is **mandatory** on every 19 finding, and it gates severity:
+
+| Label | Meaning | Severity |
+|---|---|---|
+| **strong** | Sites and authorities counted; destination exists; zero business-rule change | SHOULD-FIX |
+| **worth exploring** | Pattern real, benefit clear, exact shape of the fix still open | SHOULD-FIX (phrased as a proposal to validate) |
+| **speculative** | Diagnosis solid, but an unresolved tension (parity variation, money path) means the fix may not shrink the interface | "Para el próximo commit" — never a Should-fix bullet |
+
+#### 19f. How to report — the depth table is MANDATORY
+
+Any 19 finding goes into this table in the report (collapsed in `<details>`), and each row
+gets a matching Should-fix bullet with its destination:
+
+| # | Decisión / interfaz | Sitios | Autoridades | Confianza | **Dueño propuesto** |
+|---|---|---:|---:|---|---|
+| 1 | `path/file.go:73` — "¿qué status corresponde a este rc?" | 11 | 3 | strong | `internal/plataform/response.go` (funnel único) |
+| 2 | `path/file.go:29` — param de transporte en la interfaz | 53 menciones / 128 `nil` | 1 impl | strong | adaptador, en el constructor |
+| — | — | — | — | — | Sin fugas detectadas ✅ |
+
+---
+
+### 20. DRY — one authoritative representation per fact (SHOULD-FIX)
+
+> "Every piece of knowledge must have a single, unambiguous, authoritative representation
+> within a system." — Hunt & Thomas, *The Pragmatic Programmer*
+
+**Check 8 asks "does this already exist?"** (before you add code). **Check 20 asks "does
+this fact live in exactly one place?"** (given the code that exists). And DRY is **not**
+SRP: SRP asks whether a module has one reason to change; DRY asks whether a fact has one
+home. A module can pass one and fail the other — keep the vocabularies apart in the report.
+
+Two blocks of identical code can be an *acceptable* DRY violation if they encode different
+facts that coincide today. Two *different-looking* blocks can violate DRY badly if both
+encode the same business rule.
+
+#### 20.0 The two flavors — the fix is not the same
+
+| Flavor | What it is | Fix |
+|---|---|---|
+| **A. Duplicated code** | Same behavior written twice with cosmetic variation (names, constants) | Extract, or parameterize by a descriptor |
+| **B. Duplicated data/structure with no source of truth** | Two structures — or a structure and an implicit convention — that must be hand-synced, with nothing in the build enforcing it | A **type or table that binds them**, plus one test that proves the binding. *Not* a function |
+
+Misdiagnosing B as A is the common failure: extracting a helper over two parallel constant
+lists leaves the lists — and the drift — exactly where they were.
+
+#### 20a. Flavor A — code clones under the `dupl` radar
+
+Clone detectors are threshold-based, and hand-copied clones tend to sit **just below** the
+configured threshold. A green `dupl` run proves nothing.
+
+```bash
+# What threshold does the repo actually enforce?
+grep -rn "dupl" .golangci.yml .golangci.yaml 2>/dev/null
+# Re-run well below it — clones hiding under the project threshold surface immediately
+dupl -threshold 40 -plumbing ./... 2>/dev/null | sort -u | head -40
+```
+
+Flag when:
+
+- [ ] Two functions share the same **shape** (same ordered steps) and differ only in
+      constants, names, or one extra participant
+- [ ] Sibling pairs exist across the whole chain — `doX`/`doXVariant`,
+      `registerX`/`registerXVariant`, `resolveA`/`resolveAVariant` — i.e. the clone was
+      taken at the top and dragged its callees along
+- [ ] Blocks that are **byte-identical modulo constants** (duplicate-detection block,
+      retry/reversal window, validation preamble)
+- [ ] A **variance table already exists** (a config struct, a descriptor, a map of
+      per-operation values) that describes some of the variants while another variant
+      hardcodes the same values inline. That descriptor is the fix — it is already written
+
+Proposal shape for flavor A: **one execution path parameterized by a descriptor**, with
+the variant-only parts (an extra participant, a different amount rule) carried as
+descriptor fields. State explicitly that the public interface does not change — this is
+implementation depth, not a contract change.
+
+#### 20b. Flavor B — parallel lists with nothing enforcing the pairing
+
+The highest-value catch in check 20, because the compiler is silent and review catches it
+only by luck.
+
+```bash
+# Two flat constant lists whose only link is a naming convention
+CODES=internal/plataform/bussines/codes.go
+MSGS=internal/plataform/bussines/messages.go
+grep -c '=' "$CODES"; grep -c '=' "$MSGS"      # unequal counts = guaranteed drift
+# Comments standing in for a type the compiler could check:
+grep -rn "pairs with\|va con\|corresponde a\|see also .*Code" --include='*.go' internal/
+# Hand-pairing at call sites: both a code constant and a message constant on one line
+grep -rn "Code[,)].*Message\|Message[,)].*Code" --include='*.go' internal/ | wc -l
+# Reinvented envelope factories — the same struct literal built by private helpers per module
+grep -rn "ResponseBase{\|NovoResult{\|Envelope{" --include='*.go' internal/ | grep -v _test.go | wc -l
+grep -rn "func.*[Rr]esp(\|func new.*Response(" --include='*.go' internal/modules/ | grep -v _test.go
+```
+
+Flag when:
+
+- [ ] Two lists that must stay in sync have **different lengths** and nothing validates it
+- [ ] A **comment** documents the pairing (the comment is standing in for a type)
+- [ ] ≥10 call sites pair the two tokens by hand
+- [ ] ≥2 modules define their **own private factory** for the same envelope/struct
+
+Proposal shape for flavor B — three parts, all required:
+
+1. **One lookup keyed by the stable identifier** (the rc) that yields the paired value.
+   Constants stay flat and immutable; only the pairing moves
+2. **One constructor** in the platform package that builds the envelope
+3. **One table test** asserting every key has exactly one value — this is what converts a
+   review catch into a build failure
+
+State the parity guarantee explicitly: **message text does not change**. A DRY fix that
+alters a customer-visible string is not a DRY fix, it is a contract change.
+
+#### 20c. Flavor B — copy-pasted bootstrap (the invariant half of every `Init`)
+
+```bash
+# The same literal error string in several modules = copy-pasted wiring
+grep -rhon 'errors\.New("[^"]*"\|fmt\.Errorf("[^"]*"' --include='module.go' internal/modules/ \
+  | sed 's/^[0-9]*://' | sort | uniq -c | sort -rn | awk '$1 > 1'
+# Init size per module — an outlier that is much SHORTER is the interesting one
+for f in internal/modules/*/module.go; do
+  printf '%s %s\n' "$(awk '/func .*Init\(/,/^}/' "$f" | wc -l)" "$f"
+done | sort -rn
+```
+
+Flag when:
+
+- [ ] ≥3 modules repeat the same wiring block (logger tag, DB handle, key material, HTTP
+      client, required-module lookups), including **identical error strings**
+- [ ] One module's `Init` is conspicuously **shorter** because it skipped the block — then
+      check what that omission silently cost it (usually observability; ties to 19d). *An
+      omission with no failure mode is the strongest argument for a bootstrap*
+- [ ] Startup ordering between modules is enforced only by **registration order** in a
+      slice, with nothing asserting it. Propose a startup assertion regardless of whether
+      the bootstrap lands — it is cheap and it fails loudly
+
+The duplicated thing here is not code, it is the **decision of what every module must
+initialize**. The fix is one call that returns what every module needs and **refuses to
+construct a module without it**.
+
+#### 20d. Cost evidence — prove it with git, not with taste (MANDATORY)
+
+Before emitting any check 20 finding, produce at least one of these. This is what makes
+the finding survive an author's pushback:
+
+```bash
+# Did the same fix have to land in both copies? (the killer evidence)
+git log --oneline -20 -- path/to/fileA.go path/to/fileB.go
+git log --oneline --all -S'<the rule that changed>' -- internal/ | head
+# Are these files hot? (churn = the duplication is being paid for continuously)
+git log --format=%H --since='12 months ago' -- path/to/file.go | wc -l
+```
+
+| Evidence | Strength |
+|---|---|
+| A fix landed twice, once per copy (ticket or commit pair) | **Strong** — quote the commits/tickets. Not style, measurable double work |
+| Two counters that must match and don't (55 vs 44) | **Strong** — drift is already present |
+| A module that skipped the block and lost a guarantee silently | **Strong** — the failure mode is "nothing happens" |
+| High churn on both copies | Worth exploring |
+| "It looks duplicated" | **Not a finding** |
+
+#### 20e. The over-application guard — run this BEFORE reporting (MANDATORY)
+
+> "Duplication is far cheaper than the wrong abstraction." — Sandi Metz
+
+DRY is not a mandate. Forcing a shared abstraction onto *accidental* duplication couples
+modules that should evolve apart, and the coupling is worse than the copy.
+
+For each candidate, answer in one line each — in the report, not just in your head:
+
+- [ ] **Same reason to change?** If the business rule changes, must **both** copies change
+      together? Yes → real duplication. "Maybe" → accidental; leave it
+- [ ] **Could they legitimately diverge?** Two flows that look alike today but answer to
+      different owners/regulations/products will diverge. Leave them
+- [ ] **Is the abstraction obvious, or invented?** If the descriptor/table/type already
+      exists in the codebase (see 20a, 20b), the abstraction is discovered — low risk. If
+      you had to invent a concept to make it fit, that is the wrong-abstraction zone
+- [ ] **Is it small and local?** Two adjacent 5-line blocks in one file are cheaper left
+      alone than parameterized
+
+Cannot answer these affirmatively → **do not report**, or report it as
+"Para el próximo commit" with the tension named. Tolerating small local duplication is a
+legitimate review outcome, and saying so out loud is part of this check.
+
+#### 20f. Keeping the vocabulary honest (SOLID cross-reference)
+
+When the same code is visible through several lenses, report it **once**, under the lens
+that names the cause, and mention the others in one clause at most. Mapping:
+
+| Symptom | Primary check | SOLID name |
+|---|---|---|
+| Same decision re-decided at N sites | 19a | SRP |
+| A sequence replayed by every entry point | 19c | SRP + temporal decomposition |
+| Interface carrying a param almost nobody uses (`nil` in tests) | 19b | ISP |
+| Business service depending on a concrete transport/infra type | 19b | DIP |
+| Identical logic in two functions | 20a | *not SOLID* — DRY |
+| Two lists hand-synced; copy-pasted `Init` | 20b/20c | *not SOLID* — DRY |
+
+**Do not force the SOLID frame where it does not apply.** OCP and LSP violations are rare
+in idiomatic Go review — Go has no class inheritance, and extension points are interfaces
+already covered by 19b. If you did not find one, say nothing; an invented OCP finding to
+round out the acronym is noise, and it costs the report its credibility.
+
+---
+
+### 21. Go idiom safety net (Uber Go Style Guide)
+
+Checks 19-20 operate on modules. Check 21 operates one level down — **function, struct,
+error, receiver** — on the idioms that survive a `golangci-lint` green run. Only report
+what the toolchain in Phase 0 did **not** already flag; a duplicate of a linter finding is
+noise.
+
+#### 21a. Correctness & safety idioms (BLOCKER)
+
+Real production failure modes, so they carry BLOCKER severity — each one needs the
+concrete failure scenario, per check 18.
+
+```bash
+# 1. Mutex/WaitGroup/atomic copied by value — the copy protects nothing
+grep -rn "func (\w* [A-Z]\w*)" --include='*.go' internal/ | grep -v '\*'   # value receivers
+grep -rln "sync\.Mutex\|sync\.RWMutex\|sync\.WaitGroup" --include='*.go' internal/
+# Cross-check: a type holding a mutex MUST use pointer receivers everywhere.
+
+# 2. panic in library code — steals the caller's decision
+grep -rn "panic(\|must\w*(" --include='*.go' internal/ | grep -v _test.go
+
+# 3. os.Exit / log.Fatal outside main() — skips every defer
+grep -rn "os\.Exit\|log\.Fatal" --include='*.go' internal/ cmd/ | grep -v "cmd/.*/main.go"
+
+# 4. Mutable package-level state
+grep -rn "^var [a-z]\w* *=\|^var [A-Z]\w* *=" --include='*.go' internal/ | grep -v "_test.go\|errors.New\|= \[\]\|Err"
+
+# 5. init() with side effects — runs before any config, untestable, order-dependent
+grep -rn "^func init()" --include='*.go' internal/ cmd/
+
+# 6. Single-value type assertion — panics instead of returning an error
+grep -rn "\.(\**[A-Za-z_][A-Za-z0-9_.]*)$\|:= *\w*\.(\w" --include='*.go' internal/ | grep -v ", ok\|, err\|_test.go"
+```
+
+- [ ] **Zero-value mutex is already valid** — `var mu sync.Mutex` needs no constructor; a
+      `*sync.Mutex` field is a nil-deref waiting to happen
+- [ ] **Slices and maps crossing a package boundary are copied** — storing a caller's
+      slice, or returning an internal map, hands out a mutable reference into your state.
+      Copy on the way in *and* on the way out
+- [ ] **Pointers to interfaces are (almost) always wrong** — `*io.Writer`. An interface
+      value is already a reference
+- [ ] **Embedding a type in a public struct leaks its API** — every future method on the
+      embedded type silently joins your contract. Prefer a named field
+- [ ] **No `panic` for expected failures** in library/service code — return an error. A
+      `Must*` constructor is acceptable only at package init of a program, never in a
+      request path
+
+#### 21b. Contract idioms (SHOULD-FIX)
+
+```bash
+# Compile-time interface satisfaction — cheap, and turns a runtime surprise into a build error
+grep -rn "var _ [A-Za-z_.]* = " --include='*.go' internal/ | wc -l   # how many exist today?
+
+# Raw ints/strings where time types belong
+grep -rn "Timeout\|TTL\|Interval\|ExpiresIn\|Delay" --include='*.go' internal/ \
+  | grep -E "(int|int64|string)\b" | grep -v "time\."
+
+# Buffered channels with an arbitrary capacity
+grep -rn "make(chan [^)]*, *[2-9][0-9]*)" --include='*.go' internal/
+
+# Identifiers shadowing builtins
+grep -rnE "\b(len|cap|new|copy|min|max|close|delete|append|error|string|int|any)\b *(:=|=[^=])" \
+  --include='*.go' internal/ | grep -v _test.go
+```
+
+- [ ] **Error taxonomy is deliberate** — pick per how much the caller must know:
+      **sentinel** (`var ErrNotFound = errors.New(...)`) when the caller branches on
+      identity; **error type** (`type ValidationError struct{...}`) when the caller needs
+      the *data*; **opaque** (`fmt.Errorf`) when the caller only needs "it failed".
+      Exporting a type nobody type-asserts is surface for nothing; making opaque an error
+      the caller must branch on forces string matching
+- [ ] **Wrap with `%w`, never `%v`**, when the chain must survive `errors.Is`/`As`
+      (overlaps check 11 — report once, there)
+- [ ] **Naming**: sentinels `ErrFoo`/`errFoo`; error types `FooError`; error strings
+      lowercase, no trailing punctuation, no "failed to" prefix (the chain already reads
+      as a sentence)
+- [ ] **Two-value type assertion always** — `v, ok := x.(T)`
+- [ ] **`time.Time` / `time.Duration`, not raw ints** — a `timeoutSeconds int` crossing a
+      boundary is a unit bug waiting for the next reader. Serialized durations use a
+      string (`"30s"`) or a documented unit in the field name
+- [ ] **Channel size is 0 or 1** — anything larger is a queue depth that needs a written
+      justification (what backpressure does it absorb? what happens when it fills?)
+- [ ] **Assert interface satisfaction at compile time** — `var _ Repository = (*repo)(nil)`
+- [ ] **Receiver consistency** — a type mixing value and pointer receivers has an
+      ambiguous method set; pick one, and pointer if any method mutates or the type holds a
+      lock
+- [ ] **Struct tags on every serialized field** — an untagged field silently changes the
+      wire contract when the Go field is renamed
+- [ ] **Do not shadow builtins or the package name**
+
+#### 21c. Style & performance idioms (NIT — batch them, never a phase of their own)
+
+- [ ] `strconv.Itoa` over `fmt.Sprint` for simple conversions (measurably cheaper, and
+      states intent)
+- [ ] No repeated `string`↔`[]byte` conversion in a loop or hot path
+- [ ] Preallocate capacity when the size is known: `make([]T, 0, len(src))`
+- [ ] **Early return over nested blocks**; no `else` after a returning `if`
+- [ ] `nil` is a valid empty slice — do not return `[]T{}` to "be safe", and check
+      emptiness with `len(s) == 0`, never `s != nil`
+- [ ] **Keyed struct literals** across package boundaries (positional literals break
+      silently when a field is added) — overlaps 9b, report once
+- [ ] Reduce variable scope; declare at first use
+- [ ] Raw string literals instead of escaped quotes
+- [ ] Group similar declarations; import groups ordered (stdlib / external / internal);
+      import aliases consistent with the rest of the repo (**one alias per package
+      repo-wide** — the same type imported under several aliases makes every future grep
+      unreliable; see 9.5)
+- [ ] Table-driven tests for multi-case logic; **functional options** for constructors
+      with several optional parameters instead of a growing positional list
+
+Anything in 21c that `gofmt`, `golangci-lint` or `go fix` already reports belongs to
+Phase 0, not here. Emit only the residue.
+
+---
+
 ## go-bricks discovery (Phase 4 — SHOULD-FIX)
 
 Phase 2 (checks 1-10) catches anti-patterns. Phase 4 actively explores what
@@ -1986,6 +2559,22 @@ Each check in the gate summary table uses three states:
 A ⚠️ is NOT a pass — it means the reviewer acknowledges a gap. The PR author
 should provide evidence or the reviewer should re-check in a follow-up.
 
+**Phase 3b severity, explicitly** — design findings must not inflate the verdict:
+
+| Check | Max severity | Rationale |
+|---|---|---|
+| 19 (depth/leakage), 20 (DRY) | **SHOULD-FIX** — never a blocker | Nothing is broken at runtime; blocking a PR over a pre-existing leak the author merely touched is not this skill's job |
+| 19/20 rated `speculative` | "Para el próximo commit" only | The tension is unresolved; it is a conversation, not a task |
+| 21a (correctness idioms) | **BLOCKER** | A mutex copied by value or `os.Exit` in a request path is a live defect, with a concrete failure scenario |
+| 21b | SHOULD-FIX | Contract risk, not a live defect |
+| 21c | NIT — batched | Readability |
+
+**Pre-existing vs. introduced.** If the diff did not create the leak or the clone but
+merely adds the Nth site to it, say so and keep it SHOULD-FIX: *"this PR adds site N+1 to
+an existing leak"*. That framing is what gets it fixed instead of argued about. If the diff
+**created** the second site of a brand-new clone, that is the cheapest moment in its life
+to fix — say that too.
+
 ---
 
 ## Reporting — Markdown output file (in a MACHINE temp dir, never the repo)
@@ -2074,9 +2663,16 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 >   ver checks 8b/8c). Si es contenido mal ubicado *dentro* de un archivo, usar
 >   ```suggestion```; si es el archivo entero, `git mv`.
 > - **Bug/error de runtime** → dar el diff before→after concreto (ver Phase 3).
+> - **Diseño (fuga de decisión / interfaz shallow / duplicación)** → dar el **conteo**
+>   (N sitios · M autoridades, o la evidencia de costo en git) + el **dueño propuesto**
+>   (paquete/archivo que debe poseer la decisión, o la fuente de verdad del hecho) +
+>   la etiqueta de confianza. Ver checks 19/20. Los `speculative` NO van aquí, van a
+>   "Para el próximo commit".
 >
 > Un ítem que dice "mejorar el nombre", "reubicar esto" o "revisar la estructura" **sin la
 > propuesta concreta (nombre exacto / ruta destino / diff) NO está listo** — no se emite así.
+> Lo mismo aplica a diseño: "considerar consolidar", "está muy duplicado" o "esta interfaz
+> es rara" **sin conteo y sin dueño propuesto NO se emite**.
 
 - [ ] **`path/to/file.go:42`** — `[tag]` {descripción developer-friendly: qué está mal, qué pasa en runtime, cómo corregir}
 - [ ] **`path/to/file.go:80`** — `[tag]` {descripción}
@@ -2089,6 +2685,9 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
   ```bash
   git mv internal/modules/<mod>/<capa>/<origen>.go internal/modules/<mod>/<capa>/<destino>.go
   ```
+- [ ] **`path/to/file.go:73`** — `[design]` la decisión "{pregunta}" se resuelve en **{N} sitios** con **{M} autoridades distintas** (`{autoridad A}`, `{autoridad B}`); cambiar la regla obliga a tocar los {N}. Proponer que la posea `{paquete/archivo destino}` y que el llamador quede en 1 línea. *(confianza: strong — no cambia ninguna regla de negocio)*
+- [ ] **`path/to/file.go:29`** — `[design]` `{param}` es un seam hipotético: {X} menciones no-test, **{Y} implementación real**, `nil` en {Z} tests. Que el adaptador lo reciba en el constructor y la interfaz quede `(ctx, req)` — desaparecen {Z} argumentos `nil`. *(confianza: strong)*
+- [ ] **`fileA.go:160` ↔ `fileB.go:915`** — `[dry]` mismo comportamiento, ~{N} líneas copiadas; el fix de `{regla}` ya tuvo que aterrizar 2 veces ({commits/tickets}). Un solo path parametrizado por `{descriptor existente}`; la interfaz no cambia. *(confianza: strong)*
 
 ---
 
@@ -2154,6 +2753,13 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | Sin resource leaks | ✅/❌/⚠️ | |
 | Fail-closed en fallos | ✅/N/A | |
 | Calidad de tests | ✅/❌/⚠️ | |
+| **Diseño y duplicación (Fase 3b)** | | |
+| Sin fugas de decisión (una autoridad por decisión) | ✅/❌/N/A | {N} sitios / {M} autoridades |
+| Sin interfaces shallow ni params pass-through | ✅/❌/N/A | |
+| Sin concerns fusionados (telemetría independiente) | ✅/❌/N/A | |
+| DRY — cada hecho con una sola fuente de verdad | ✅/❌/N/A | |
+| Guard de sobre-aplicación DRY evaluado | ✅/N/A | duplicación accidental tolerada a propósito |
+| Idioms de Go (Uber) | ✅/❌/⚠️ | |
 | **go-bricks discovery** | | |
 | Versión go-bricks | ⚠️/✅ | |
 | Oportunidades go-bricks | ✅/❌ | {N} encontradas |
@@ -2174,6 +2780,24 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 Verificado: receptores, `ctx` primero, `error` último, acrónimos (`ID`/`URL`/`HTTP`),
 stuttering, alias de import, palabras ruido (`Data`/`Info`/`Manager`), verbos vacíos,
 constantes autodescriptivas.
+
+</details>
+
+<details>
+<summary>🧱 Diseño — profundidad de módulos y duplicación (checks 19-20)</summary>
+
+| # | Decisión / interfaz | Sitios | Autoridades | Confianza | **Dueño propuesto** |
+|---|---|---:|---:|---|---|
+| 1 | `path/file.go:73` — "{la decisión, como pregunta}" | {N} | {M} | strong | `{paquete/archivo que debe poseerla}` |
+| — | — | — | — | — | Sin fugas detectadas ✅ |
+
+| # | Hecho duplicado | Sabor | Evidencia de costo | **Fuente de verdad propuesta** |
+|---|---|---|---|---|
+| 1 | `fileA.go:160` ↔ `fileB.go:915` | A · código | {commit/ticket donde el fix aterrizó 2 veces} | un solo path + descriptor de operación |
+| 2 | `codes.go` ↔ `messages.go` | B · datos | {55 vs 44, nada lo valida} | tabla indexada por rc + 1 test de tabla |
+| — | — | — | — | Sin duplicación de conocimiento ✅ |
+
+Tolerado a propósito (duplicación accidental, no misma razón de cambio): {lista o "ninguno"}.
 
 </details>
 
@@ -2217,9 +2841,16 @@ constantes autodescriptivas.
 >   → `module.go`, HTTP handlers → `http.go`, etc. — see checks 8b/8c). Content misplaced
 >   *inside* a file → ```suggestion```; a whole file → `git mv`.
 > - **Runtime bug** → give the concrete before→after diff (see Phase 3).
+> - **Design (leaked decision / shallow interface / duplication)** → give the **count**
+>   (N sites · M authorities, or the git cost evidence) + the **proposed owner** (the
+>   package/file that should own the decision, or the fact's source of truth) + the
+>   confidence label. See checks 19/20. `speculative` items do NOT belong here — they go
+>   to "For the next commit".
 >
 > An item that says "improve the name", "relocate this" or "review the structure" **without
 > the concrete proposal (exact name / destination path / diff) is NOT ready** — don't emit it.
+> Same for design: "consider consolidating", "this is very duplicated" or "this interface
+> feels off" **without a count and a proposed owner is NOT emitted**.
 
 - [ ] **`path/to/file.go:42`** — `[tag]` {developer-friendly description: what's wrong, runtime impact, how to fix}
 - [ ] **`path/to/file.go:80`** — `[tag]` {description}
@@ -2232,6 +2863,9 @@ constantes autodescriptivas.
   ```bash
   git mv internal/modules/<mod>/<layer>/<source>.go internal/modules/<mod>/<layer>/<dest>.go
   ```
+- [ ] **`path/to/file.go:73`** — `[design]` the decision "{question}" is answered at **{N} sites** by **{M} distinct authorities** (`{authority A}`, `{authority B}`); changing the rule means touching all {N}. Propose `{destination package/file}` owns it, leaving the caller at 1 line. *(confidence: strong — no business rule changes)*
+- [ ] **`path/to/file.go:29`** — `[design]` `{param}` is a hypothetical seam: {X} non-test mentions, **{Y} real implementation**, `nil` in {Z} tests. Let the adapter take it at construction and the interface become `(ctx, req)` — {Z} `nil` arguments disappear. *(confidence: strong)*
+- [ ] **`fileA.go:160` ↔ `fileB.go:915`** — `[dry]` same behavior, ~{N} hand-copied lines; the `{rule}` fix already had to land twice ({commits/tickets}). One path parameterized by `{existing descriptor}`; interface unchanged. *(confidence: strong)*
 
 ---
 
@@ -2297,6 +2931,13 @@ constantes autodescriptivas.
 | No resource leaks | ✅/❌/⚠️ | |
 | Fail-closed on errors | ✅/N/A | |
 | Test quality | ✅/❌/⚠️ | |
+| **Design & duplication (Phase 3b)** | | |
+| No leaked decisions (one authority per decision) | ✅/❌/N/A | {N} sites / {M} authorities |
+| No shallow interfaces or pass-through params | ✅/❌/N/A | |
+| No fused concerns (telemetry independent) | ✅/❌/N/A | |
+| DRY — every fact has one source of truth | ✅/❌/N/A | |
+| DRY over-application guard applied | ✅/N/A | accidental duplication deliberately tolerated |
+| Go idioms (Uber) | ✅/❌/⚠️ | |
 | **go-bricks discovery** | | |
 | go-bricks version | ⚠️/✅ | |
 | go-bricks opportunities | ✅/❌ | {N} found |
@@ -2317,6 +2958,24 @@ constantes autodescriptivas.
 Checked: receivers, `ctx` first, `error` last, initialisms (`ID`/`URL`/`HTTP`),
 stuttering, import aliases, noise words (`Data`/`Info`/`Manager`), empty verbs,
 self-describing constants.
+
+</details>
+
+<details>
+<summary>🧱 Design — module depth & duplication (checks 19-20)</summary>
+
+| # | Decision / interface | Sites | Authorities | Confidence | **Proposed owner** |
+|---|---|---:|---:|---|---|
+| 1 | `path/file.go:73` — "{the decision, as a question}" | {N} | {M} | strong | `{package/file that should own it}` |
+| — | — | — | — | — | No leaks found ✅ |
+
+| # | Duplicated fact | Flavor | Cost evidence | **Proposed source of truth** |
+|---|---|---|---|---|
+| 1 | `fileA.go:160` ↔ `fileB.go:915` | A · code | {commit/ticket where the fix landed twice} | one path + operation descriptor |
+| 2 | `codes.go` ↔ `messages.go` | B · data | {55 vs 44, nothing validates it} | table keyed by rc + 1 table test |
+| — | — | — | — | No knowledge duplication ✅ |
+
+Deliberately tolerated (accidental duplication — not the same reason to change): {list or "none"}.
 
 </details>
 
@@ -2383,8 +3042,22 @@ BRICKS=$(go env GOMODCACHE)/github.com/gaborage/go-bricks@$(grep go-bricks go.mo
 
 ### Step 2 — Run all anti-pattern checks
 
-Run every grep from checks 1, 1b, 2, 4, 5, 6, 7, 8, 9, 11, 12, 12b, 13 against `<path>`.
-Replace `<changed-files>` with `<path>` and `<module>` with each module under `<path>`.
+Run every grep from checks 1, 1b, 2, 4, 5, 6, 7, 8, 9, 11, 12, 12b, 13, **19, 20, 21**
+against `<path>`. Replace `<changed-files>` with `<path>` and `<module>` with each module
+under `<path>`.
+
+**Phase 3b on a scan is where it pays most** — a PR diff shows one site of a leak, a scan
+sees all N. Run it repo-wide, not per-module: the whole point of check 19 is the count
+across modules, and check 20b/20c only show up when you compare siblings.
+
+- Do a full **19.0 loop** for each cross-cutting concern the codebase has (response
+  assembly, error rendering, auth exit, business-code construction, customer/entity
+  resolution, module bootstrap) — those are where leaks live
+- Build the **depth table** (19f) and both **duplication tables** (20) as first-class scan
+  artifacts, next to the rawQuery audit table
+- Apply the **20e over-application guard** to every DRY candidate before it reaches the
+  roadmap, and list what you deliberately tolerated. A scan that proposes consolidating
+  everything it saw is a scan nobody will execute
 
 ### Step 3 — rawQuery deep audit
 
@@ -2464,8 +3137,8 @@ Order by **risk × blast radius**, not by how easy it is:
 | **P0** | SQL injection, PCI leaks (PAN/CVV in logs), tenant-isolation breaks, resource leaks in hot paths | Exploitable or already leaking |
 | **P1** | Correctness: swallowed errors, lost error chain, goroutine leaks, fail-open branches | Silent wrong behavior in production |
 | **P2** | Layer violations, raw `net/http` / `sql.DB` instead of go-bricks, duplicated clients | Structural debt that multiplies with each new module |
-| **P3** | rawQuery migratable to QueryBuilder, dead scaffolding, duplicated constants/types | Maintenance cost, no runtime risk |
-| **P4** | Naming, missing docs, modernization (`go fix`) | Readability; batch them, never a phase of their own |
+| **P3** | rawQuery migratable to QueryBuilder, dead scaffolding, duplicated constants/types, **leaked decisions (19a) and DRY flavor-B violations (20b/20c) rated `strong`** | Maintenance cost, no runtime risk — but every new module inherits the leak |
+| **P4** | Naming, missing docs, modernization (`go fix`), Go style/perf idioms (21c) | Readability; batch them, never a phase of their own |
 
 Two sequencing rules that override raw priority:
 
@@ -2474,6 +3147,17 @@ Two sequencing rules that override raw priority:
    into one.
 2. **Never mix priorities in one phase.** A P0 phase must be reviewable in ten
    minutes; padding it with renames destroys that.
+3. **Close the leak before you build on it.** A `strong` check-19 finding whose fix makes
+   two or three other findings shrink or vanish is an enabler by rule 1 — schedule it
+   early even at P3. Say which findings it shrinks. Conversely, a check-19 finding whose
+   destination does not exist yet is not a phase, it is a design task: keep it out of the
+   roadmap until the owner is decided.
+4. **Money-path consolidation is never a mechanical phase.** Any 19/20 finding on a flow
+   that decides whether funds moved, reversed, or are in doubt carries a per-branch parity
+   verification against the legacy source as part of its own phase estimate. If that
+   verification cannot be scheduled, the finding is deferred, not sized.
+5. **`speculative` findings never enter the roadmap.** They go in the deferred list with
+   the unresolved tension written out.
 
 #### 6.3 Estimating a phase
 
@@ -2488,6 +3172,11 @@ estimates and never as fact:
 | Migrating one raw `const` query to QueryBuilder + test | ~40-80 líneas |
 | Replacing a raw `net/http` client with the connector + tests | ~120-200 líneas |
 | Extracting a shared helper consumed by N call sites | ~80-150 líneas + N × ~5 |
+| Cerrar una fuga de decisión (funnel único) + migrar N sitios | ~120-200 líneas + N × ~8, **borra** el bloque repetido en cada sitio → el neto puede ser negativo; decirlo |
+| Quitar un param pass-through de una interfaz de N métodos | ~40-80 líneas impl, pero toca **muchos** archivos de test → el cap de 10 files es el que parte la fase |
+| Colapsar dos clones en un path + descriptor | ~60-120 líneas, **menos** las ~N copiadas que se borran |
+| Tabla rc→mensaje + constructor + test de tabla | ~80-140 líneas + N × ~2 en call sites |
+| Bootstrap común de módulos + 1 test | ~60-100 líneas, borra ~18 × M en los M módulos |
 
 When a rename touches more than 10 files, the file cap — not the line cap — is what
 splits it. Say so explicitly in the roadmap.
@@ -2552,6 +3241,11 @@ pushes back on a naming or concurrency finding:
 - [Go 1.26 release notes](https://go.dev/doc/go1.26) — `go fix` modernizers, Green Tea GC, `goroutineleak` pprof profile (check 16)
 - [golangci-lint v2 docs](https://golangci-lint.run/docs/linters/) — `linters.default` replaced `enable-all`/`disable-all` (Phase 0)
 - [Clean Code, cap. 2 — Meaningful Names](https://www.cs.hmc.edu/cs70/homework/homework-03/pdfs/stylemartin.pdf) — intention-revealing names, noise words, consistent lexicon (check 9.0b)
+- John Ousterhout, *A Philosophy of Software Design* — deep vs. shallow modules, information leakage, temporal decomposition, pass-through methods/parameters, cognitive load (check 19). The canonical deep module is the Unix file API: 4 calls over a kernel
+- Andy Hunt & Dave Thomas, *The Pragmatic Programmer* (1999) — "every piece of knowledge must have a single, unambiguous, authoritative representation within a system" (check 20)
+- Sandi Metz, ["The Wrong Abstraction"](https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction) — "duplication is far cheaper than the wrong abstraction" (check 20e, the guard that keeps check 20 from over-firing)
+- [Uber Go Style Guide](https://github.com/uber-go/guide/blob/master/style.md) — guidelines (correctness/safety), performance, style, patterns (check 21)
+- Robert C. Martin — SOLID. Used in this skill only as **vocabulary mapping** (check 20f), never as a checklist of its own: SRP ≈ 19a/19c, ISP ≈ 19b, DIP ≈ 19b. OCP and LSP rarely produce real findings in idiomatic Go — do not invent them
 - go-bricks `messaging` / `outbox` / `inbox` packages — `Declarations.Validate()`, `ConsumerDeclaration`, `EventIDFromHeaders`, `Inbox.ProcessOnce` (check 6b). Read them in `$(go env GOMODCACHE)/github.com/gaborage/go-bricks@<ver>/`
 - NKH1 `common:pr-review` — sizing, title, coverage floor, promotion gates (Phase 1)
 - `novo-legacy-migration-endpoint` (`/migrate`) — phase caps (≤400 líneas / ≤10 files), branch-per-phase from `main`, version bump per phase (scan Step 6)
