@@ -1,16 +1,16 @@
 ---
 name: novo-legacy-migration-endpoint
-description: "Migrates a single legacy endpoint to Go using the context from novo-legacy-migration-context. Supports subcommands: /migrate list (all endpoints + status), /migrate status <name> (phase detail), /migrate roadmap (full migration roadmap with priorities). Uses go-bricks as the mandatory architectural foundation. Encodes 50+ battle-tested rules from real production migrations."
+description: "Migrates a single legacy endpoint to Go using the context from novo-legacy-migration-context. Supports subcommands: /migrate list (all endpoints + status), /migrate status <name> (phase detail), /migrate roadmap (full migration roadmap with priorities). Uses go-bricks as the mandatory architectural foundation. Encodes 50+ battle-tested rules from real production migrations, and builds to the go-dev-technical review standard so generated code passes review on the first pass: a self-review gate closes every phase, and the seven decisions that are cheap at construction time (response funnel, no parallel code/message lists, adapter-owned transport, shared-reader reuse, shared bootstrap, copied bus contract names, QueryBuilder always) are taken before the first line is written."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.3.0"
+  version: "4.4.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
   scope: implementation
   output-format: code
-  related-skills: novo-legacy-migration-context, golang-pro, golang-testing, openapi-spec-generation
+  related-skills: novo-legacy-migration-context, go-dev-technical, go-bricks-modules, golang-pro, golang-testing, openapi-spec-generation
 ---
 
 # Migrate Endpoint
@@ -1301,16 +1301,46 @@ Before writing the first line of code in any phase, validate ALL applicable item
 4. Bump version in versioning file
 5. `grep -rn` for source-language references — 0 matches
 6. `grep -rn "log.Printf\|fmt.Println"` — 0 debug logs
-7. **go-bricks POST-CHECK** — verify no go-bricks type was reinvented during implementation:
+7. **SELF-REVIEW GATE (MANDATORY)** — review your own phase before anyone else does.
+   Reviewing your own diff costs minutes; a review round trip costs a day.
+
+   **Preferred:** run the reviewer itself against the phase branch —
+   `/go-dev-technical review <PR_URL>` once the PR exists, or apply its Phase 0 evidence
+   sweep locally before opening it. That skill owns the standards; do not re-derive them
+   here.
+
+   **Minimum, when the PR does not exist yet** — the sweep from `go-dev-technical`
+   Step 0.7, scoped to what this phase touched:
    ```bash
-   # Check for raw DB usage (should use database.Interface)
-   grep -rn "sql.DB" internal/modules/{module}/ --include="*.go" | grep -v _test.go
-   # Check for raw HTTP client (should use httpclient.Client)
-   grep -rn "http.Client" internal/modules/{module}/ --include="*.go" | grep -v _test.go
-   # Check for raw echo context (should use server.HandlerContext)
-   grep -rn "echo.Context" internal/modules/{module}/handlers/ --include="*.go" | grep -v _test.go
+   SCOPE="internal/modules/{module}/"
+   OUT=/tmp/phase-sweep.txt; : > $OUT
+   s(){ printf '\n##### %s\n' "$1" >> $OUT; shift; grep -rnE "$@" $SCOPE --include='*.go' 2>/dev/null | grep -v '_test\.go' >> $OUT || true; }
+   s SQL-INJECTION    'fmt\.(Sprintf|Fprintf)\(.*(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)|"[^"]*(SELECT|WHERE)[^"]*" *\+'
+   s REINVENTED       'sql\.(DB|Open|Conn)|http\.(Client|Get|Post)\{?|echo\.Context|log\.(Printf|Println)|fmt\.Print'
+   s LAYER-BREAK      'modules/[a-z_]+/service/.*"(net/http|github.com/labstack)|modules/[a-z_]+/handlers/.*/database"'
+   s ERR-SWALLOWED    '_ = .*[Ee]rr|fmt\.Errorf\([^)]*%v[^)]*err'
+   s IDIOM-BLOCKER    'panic\(|os\.Exit|log\.Fatal|^func init\(\)'
+   s TIME-AS-INT      '(Timeout|TTL|Interval|Delay|ExpiresIn) +(int|int64|string)'
+   cat $OUT
    ```
-   All must return **0 matches** (except legitimate uses like type assertions in tests).
+   Every hit is **opened and read** before it is dismissed — the sweep locates, it never
+   concludes. A legitimate hit gets a one-line justification in the PR body so the reviewer
+   does not re-litigate it (review check 18b honors prior justifications; an unexplained
+   escape hatch gets flagged again).
+
+   **Then the design questions the sweep cannot answer** — the ones from "Build to the
+   review standard" above:
+   - Did this phase **re-assemble the response tail** instead of calling the funnel?
+   - Did it add a **second parallel list** of codes and messages?
+   - Did it **thread a transport param** through a service signature?
+   - Did it write a repository over tables a **shared reader** already covers?
+   - Did it **copy an Init block** instead of using the bootstrap?
+   - Did it **hand-copy an existing flow** instead of parameterizing a descriptor?
+
+   **Fail closed:** any BLOCKER-class hit (injection, reinvented type, layer break,
+   swallowed error, `panic`/`os.Exit` in a request path) → **fix it in this phase**. Do not
+   open the PR and do not proceed to step 8. A phase that ships a known blocker has not
+   ended.
 8. **POSTMAN COLLECTION (handler/route phase only)** — if this phase registers the route
    (i.e. the endpoint becomes reachable), the endpoint MUST be added to the Postman
    collection in the same phase. Add a request with: method, full `/core/<module>/v1/...`
@@ -1343,6 +1373,76 @@ status: "done"  # or "certified" after TEST
 current_phase: ""
 current_branch: ""
 ```
+
+---
+
+## Build to the review standard (shift-left)
+
+Every line this skill writes will be reviewed by **`go-dev-technical`** — 36 checks across
+go-bricks usage, SQL safety, layer boundaries, bus contracts, error handling, concurrency,
+resource leaks, naming, module depth, DRY and Go idioms. Code that ignores them is not
+"done and pending review"; it is **rework already scheduled**.
+
+**`go-dev-technical` is the single source of truth for those standards. This skill does not
+restate them.** Two hand-synced copies of the same rule set is precisely the check-20b
+violation that skill reports in other people's code — parallel structures with nothing
+validating that they stay in sync. So the contract between the two skills is:
+
+| Skill | Owns |
+|---|---|
+| `go-dev-technical` | **What** the standard is, and how to detect a violation |
+| this skill | **How to build it right the first time**, and when to run the check |
+
+What follows is only the delta: the decisions that are cheap while writing and expensive
+once written.
+
+### The seven that are far cheaper at construction time
+
+Ordered by what they cost to retrofit. Each names the review check that will catch it, so
+the mapping stays traceable instead of duplicated.
+
+| # | Build it this way | Retrofit cost | Review check |
+|---|---|---|---|
+| 1 | **Return the response through the existing funnel.** Never re-assemble the tail (rc→status, observe, encrypt, write) in a new handler. Find who owns it and call it; the handler method is one line of business plus one return | Every handler added meanwhile inherits the leak | 19a, 19c |
+| 2 | **Never create a second parallel list.** A new business code and its message go in the **same** table keyed by rc — never a constant in `codes.go` plus a matching constant in `messages.go` paired by naming convention | Grows to N call sites pairing by hand; drift is invisible until production | 20b |
+| 3 | **The adapter owns its client and outbound headers** at construction. Do not thread `httpclient.Client` or an auth header through the service signature | Touches every test that passed the param; the file cap splits the fix, not the line cap | 19b |
+| 4 | **Reuse the shared reader before writing a repository** (Rule 0 below). Extend the shared query and DTO when a column is missing | A parallel stack — Row, scanColumns, mapper, DTO, interface — all of it well-built and all of it duplicate | 8a |
+| 5 | **Use the shared module bootstrap.** Do not copy another module's `Init` block | Six identical error strings; the module that skips it loses telemetry silently | 20c |
+| 6 | **Bus contract names come from the counterpart, copy-pasted, never retyped.** Exchange, queue, routing key and `EventType` must match the other side character for character | Publishes fine, routes nowhere, no error anywhere. The most expensive defect this repo can ship | 6b |
+| 7 | **QueryBuilder, always.** `fmt.Sprintf` into SQL is a blocker, not a shortcut, even for a one-off admin query | Security finding on a merged branch | 1b |
+
+### Design decisions taken once, at STEP 0 — not discovered in review
+
+Before the first phase, answer these in the STEP 0 analysis. They shape the phase plan, so
+getting them wrong costs a re-plan, not an edit:
+
+- [ ] **Which existing module owns each decision this endpoint needs?** rc→status mapping,
+      customer/card resolution, response assembly, error rendering. If one exists, this
+      endpoint **calls** it. If none exists and this is the third site that needs it, say so
+      in the roadmap — do not quietly add site three
+- [ ] **Does a shared reader already cover these tables?** (Rule 0.) Answer before planning
+      a repository phase, because the answer can delete the phase
+- [ ] **Is this endpoint plaintext or encrypted?** Declare it. A module that opts out of
+      encryption must not silently opt out of telemetry
+- [ ] **Does anything here touch money?** If the flow decides whether funds moved, reversed,
+      or are in doubt, its rules are parity-verified branch by branch and never consolidated
+      as a mechanical refactor
+- [ ] **What varies between this endpoint and its siblings?** If it is a near-copy of an
+      existing flow, the variation goes in a **descriptor**, not in a second copy of the
+      execution path. Two hand-copied flows mean every future fix lands twice
+
+### Phase-level guardrails that mirror the review
+
+The phase caps (≤400 prod lines, ≤10 files) already match the review's sizing gate. Two
+consequences worth stating, because they change how a phase is planned rather than how it
+is written:
+
+- **Tests do not consume the 400-line budget, but they must earn the exemption.** They are
+  business-scenario tests — money moved or not, reversal applied or not, in-doubt resolved,
+  error paths that change the response. Coverage-padding fails review check 15 whether or
+  not it was free
+- **A rename that touches more than 10 files is split by the file cap, not the line cap.**
+  Count files before promising a phase
 
 ---
 
@@ -1530,13 +1630,34 @@ type fooReq struct {
     Data   string `json:"data"    validate:"required"`
 }
 ```
-- `httpClient` in Handler — service gets it as param
 - `authHeader` inline — no intermediate variable
+- **The service holds `s.httpClient` as a field, set at construction — it is NOT a method
+  parameter.** Same as the mixed module below: one convention, both cases
 
 ### Encrypted body (mixed module)
 
 - Service already has `s.httpClient` → all methods use it
 - Do NOT add `client` param to service method
+
+### One transport convention, both module types (resolved)
+
+Earlier versions of this skill told pure modules to pass `client httpclient.Client` as a
+method parameter while telling mixed modules the opposite. **That contradiction is
+resolved in favor of the field**, for both:
+
+- The parameter is a seam that is never substituted — one adapter, threaded through
+  several call levels, `nil` in essentially every test. Review check **19b** flags it as a
+  hypothetical seam, and it is far cheaper to not create than to remove: taking it out
+  later touches every test that passed it, so the ≤10-file cap splits the fix
+- The field convention was already the majority in the reference codebases, so this aligns
+  the two rules instead of keeping one of each
+- The adapter also owns **outbound headers**, including the correlation id — a business
+  service formatting transport headers is the DIP violation in the same check
+
+If a project's own `CLAUDE.md` or ADR still mandates the parameter for pure modules, that
+document wins for that repo — **follow it and say so in the PR**, citing this rule as the
+counter-convention worth reopening. Never silently review or build against a rule the
+project has not adopted.
 
 ---
 
@@ -1645,3 +1766,11 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | Skip AssertExpectations | Always at end |
 | Reinvent go-bricks types | Use existing go-bricks components |
 | Skip go-bricks check | ALWAYS check go-bricks FIRST |
+| Re-assemble the response tail in a new handler | Call the funnel that owns it (review 19a) |
+| New code constant + matching message constant | One table keyed by rc (review 20b) |
+| Thread `httpclient.Client` through the service | Adapter owns client + headers (review 19b) |
+| Copy another module's `Init` block | Use the shared bootstrap (review 20c) |
+| Retype a bus exchange/queue/routing key | Copy-paste from the counterpart (review 6b) |
+| Hand-copy a sibling flow | Parameterize a descriptor (review 20a) |
+| `fmt.Sprintf` into SQL "just this once" | QueryBuilder — it is a blocker (review 1b) |
+| Open the PR with a known blocker | Fail closed: fix it in the phase (self-review gate) |
