@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.11.0"
+  version: "2.12.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -18,6 +18,39 @@ metadata:
 Technical quality skill for Go services built on go-bricks. Two modes:
 - **review** — extends NKH1 `common:pr-review` with go-bricks framework validation + rawQuery safety
 - **scan** — project-wide audit for anti-patterns, unused go-bricks features, and SQL safety
+
+## Fast path — the whole review on one screen
+
+Read this first; the rest of the file is the detail behind each line. Order is chosen so the
+cheapest, most decisive evidence lands first and nothing expensive runs on a diff that
+cannot need it.
+
+| # | Step | Cost | Why here |
+|---|---|---|---|
+| 1 | Resolve the PR ref (`git fetch origin refs/pull/<N>/head`) | seconds | A wrong branch means a wrong review. Never guess |
+| 2 | **Phase 0** — worktree, `build` / `vet` / `test -cover` / `golangci-lint` / `go fix` | minutes | The toolchain finds what reading cannot. Never opine on an uncompiled diff |
+| 3 | **Step 0.6 triage** — what does the diff actually contain? | 5 s | Marks whole check families N/A *with a reason*, so nothing expensive runs pointlessly |
+| 4 | **Step 0.7 sweep** — one pass, all deterministic patterns → `/tmp/rv-sweep.txt` | one tree walk | Replaces ~83 separate greps. Every later check reads this file instead of re-scanning |
+| 5 | **Blockers** from the sweep: SQL injection → stored procs → layer breaks → error/leak/concurrency → 21a idioms | minutes | Fail fast. If it must never merge, say so before spending effort on style |
+| 6 | **Phase 1** NKH1 — size, title, PCI, coverage, version bump | minutes | Cheap, mechanical, and gates the PR regardless of what the code does |
+| 7 | **Phase 2** go-bricks (checks 1-10) + **Phase 3** correctness & naming (9, 11-16) | the bulk | Judgment work, now aimed by the sweep rather than searching blind |
+| 8 | **Phase 3b** design depth, DRY, Go idioms (19-21) | judgment | Runs on every review and scan. **No count, no finding** |
+| 9 | **Phase 4** go-bricks discovery · **Phase 5** scope & evidence (17-18) | minutes | What the PR could have used; then verify every finding carries `file:line` |
+| 10 | Write the report — read `references/report-template.md` **now**, not earlier | minutes | Loading the template before the findings exist only costs context |
+
+**Five rules that override anything below.** They are the ones that fail a review when broken:
+
+1. **Phase 0 always.** A review that never compiled the diff reports what the reviewer imagined.
+2. **Every finding carries `file:line` + a concrete failure scenario + a fix.** No exceptions.
+3. **Unverifiable is ⚠️ NO VERIFICADO, never ✅.** A gap acknowledged beats a gap hidden.
+4. **Every SHOULD-FIX carries its concrete proposal** — the exact name, the `git mv` destination, the before→after diff, or (Phase 3b) the count plus the proposed owner. Without it the item is not ready and is not emitted.
+5. **Legacy parity beats aesthetics.** A name or a code that replicates the Java contract is documented, not reported.
+
+**On-demand files** (never loaded until the step that needs them):
+`references/report-template.md` + `references/report-glossary.md` at report-writing time;
+`references/scan-workflow.md` only for the `scan` subcommand.
+
+---
 
 ## Usage
 
@@ -404,6 +437,79 @@ git log origin/main..pr-<N> --oneline
 Report it as: *"⚠️ `gh` sin scope de repo — no pude leer el título real; el commit
 `<subject>` son N chars y cumple"*. Never silently claim ✅ on something you
 could not read.
+
+### Step 0.6 — Triage: decide which check families can apply (MANDATORY, 5 seconds)
+
+Before running anything expensive, classify what the diff actually contains. A check
+family that cannot apply is **N/A with the reason**, never ✅ and never silently skipped.
+This is what keeps a 3-file config PR from being reviewed as if it were a payments engine.
+
+```bash
+D="origin/main...pr-<N>"                       # scan: replace with the paths under <path>
+git diff $D --name-only > /tmp/rv-files.txt
+c(){ grep -cE "$1" /tmp/rv-files.txt; }
+printf 'go-prod:%s go-test:%s sql:%s cfg:%s docs:%s\n' \
+  "$(grep -E '\.go$' /tmp/rv-files.txt | grep -vc _test.go)" "$(c '_test\.go$')" \
+  "$(c '\.sql$|migration')" "$(c '\.ya?ml$')" "$(c '\.md$')"
+```
+
+| If the diff has… | Run | Mark N/A |
+|---|---|---|
+| no `.go` files at all | 1b (SQL in any file), 10/10a/10b, 18 | 1, 2, 4-9, 11-16, 19-21 |
+| no `repository/` files | everything else | 4, 4b, 4c, 4d, 1b (unless SQL appears elsewhere) |
+| no `handlers/` or `middleware/` | everything else | 5, and the response-tail hunt in 19a |
+| no messaging imports | everything else | 6b and all its subchecks |
+| no goroutine / `sync` / `chan` | everything else | 12, 12b, 12c, `-race` |
+| fewer than 3 `.go` files touched | everything else | 19a and 19c **as diff findings** — but still run them repo-wide on a `scan` |
+
+**The trap to avoid:** N/A is a claim about the *diff*, not about the repo. A PR that
+touches one handler still inherits a repo-wide response-tail leak — that is reported as
+"this PR adds site N+1" (Phase 3b gate, rule 5), not as N/A.
+
+### Step 0.7 — One evidence sweep, not 83 greps (MANDATORY)
+
+Every deterministic pattern in this skill scans the same tree. Running them check by check
+walks the repo dozens of times and makes the review slow for no added precision. **Run the
+sweep once, write it to a file, and have every check read that file.** Only judgment checks
+(naming 9, design 19-20, discovery Phase 4) still need targeted reading.
+
+```bash
+SCOPE="internal/ cmd/"          # review: narrow to the changed dirs · scan: the <path>
+OUT=/tmp/rv-sweep.txt; : > $OUT
+s(){ printf '\n##### %s\n' "$1" >> $OUT; shift; grep -rnE "$@" $SCOPE --include='*.go' 2>/dev/null | grep -v '_test\.go' >> $OUT || true; }
+
+# --- BLOCKERS first: fail fast on the things that must never merge ---
+s SQL-INJECTION      'fmt\.(Sprintf|Fprintf)\(.*(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)|"[^"]*(SELECT|WHERE)[^"]*" *\+|strings\.(Replace|ReplaceAll)\(.*(SELECT|WHERE)'
+s SQL-RAW-ESCAPE     '\.(Raw|Expr|MustExpr)\('
+s STORED-PROC        'CALL |EXECUTE |BEGIN.*END;|[a-z_]+\.[a-z_]+\.[a-z_]+\('
+s REINVENTED-TYPES   'sql\.(DB|Open|Conn)|http\.(Client|Get|Post)\{?|echo\.Context|log\.(Printf|Println)|fmt\.Print'
+s LAYER-BREAK        'modules/[a-z_]+/service/.*"(net/http|github.com/labstack)|modules/[a-z_]+/handlers/.*/database"'
+s ERR-SWALLOWED      '_ = .*[Ee]rr|_, _ =|catch|recover\(\)'
+s ERR-NO-WRAP        'fmt\.Errorf\([^)]*%v[^)]*err'
+s LEAK-BODY-ROWS     '\.Do\(|\.Query\(|os\.Open\('
+s CONCURRENCY        'go func|make\(chan|sync\.(Mutex|RWMutex|WaitGroup|Map)|time\.(Sleep|Ticker)'
+s IDIOM-21A          'panic\(|os\.Exit|log\.Fatal|^func init\(\)|^var [a-z]'
+
+# --- SHOULD-FIX / NIT ---
+s BUS-CONTRACT       'Exchange|RoutingKey|QueueName|EventType|AutoAck'
+s IDIOM-21B          'make\(chan [^)]*, *[2-9]|interface\{\}|\.\(\*?[A-Za-z]'
+s NAMING-SUSPECTS    'type [A-Z][A-Za-z]*(Data|Info|Manager|Helper|Util|Handler2)|func (Get|Do|Process|Handle)[A-Z]'
+s TIME-AS-INT        '(Timeout|TTL|Interval|Delay|ExpiresIn) +(int|int64|string)'
+
+wc -l $OUT && grep -c '^#####' $OUT   # one pass done; every check now reads $OUT
+```
+
+**How each check consumes it** — `grep -A30 '^##### SQL-INJECTION' /tmp/rv-sweep.txt`, then
+**verify each hit by opening the file at that line**. The sweep *locates*; it never
+concludes. A sweep hit is a candidate, and check 18 still requires you to read the code
+before it becomes a finding — several patterns above (`ERR-SWALLOWED`, `LEAK-BODY-ROWS`,
+`IDIOM-21A`'s `^var [a-z]`) are deliberately over-broad because a false positive you
+discard costs seconds while a miss ships.
+
+**Empty section ≠ pass.** If `SCOPE` was wrong or the tree moved, every section is empty
+and the review looks clean. Sanity-check: `REINVENTED-TYPES` and `CONCURRENCY` are almost
+never both empty in a real go-bricks service. If they are, your `SCOPE` is wrong — fix it
+before reporting anything as ✅.
 
 ### Phase 0 gate
 
@@ -2717,631 +2823,40 @@ All prose (headings, descriptions, issue explanations, fix suggestions, verdict)
 MUST be in the target language. Code snippets, Go identifiers, file paths, and
 go-bricks type names stay in English (they are code).
 
-### Template — Spanish (default)
+### The report template lives in `references/`
 
-The entire output is ONE markdown block the user can copy-paste into a GitHub
-PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
-- Use `##` for top sections, `###` for sub-findings
-- Use `<details><summary>` to collapse verbose sections (validation table, nits)
-- Use task lists (`- [ ]` / `- [x]`) for actionable items
-- Use fenced code blocks with language hint (\`\`\`go, \`\`\`bash)
-- Tables must have a header separator row (`|---|---|`)
-- No raw HTML except `<details>`, `<summary>`, `<br>`
-- Emoji are OK for status: ✅ ❌ ⚠️ 🔧 💡
+The full GFM template — header, the four finding sections, the rawQuery audit table, the
+42-row validation table, and the naming / design tables — is in
+**[`references/report-template.md`](references/report-template.md)**. Read it **when you are
+ready to write the report**, not before: nothing in Phases 0-5 depends on it, and loading it
+early only costs context.
 
-```markdown
-## Revisión PR #{number} — {title}
+There is **one** template, written in Spanish. For `LANG=EN` or any other language,
+translate its labels with **[`references/report-glossary.md`](references/report-glossary.md)**
+(45 label pairs) and write the prose in the target language.
 
-📋 **{count} archivos** | **+{prodLOC} prod / +{testLOC} test líneas** (gate ≤400 sobre prod) | **Riesgo**: {ALTO/MEDIO/BAJO} | **go-bricks**: v{version}
+Why one and not one per language: two hand-synced templates are exactly the check 20b
+violation this skill reports in other people's code — parallel structures with nothing
+validating that they stay in sync. It had already drifted: three edits in a single session
+each had to be applied twice.
 
-### ❌ Bloqueadores
+GFM rules the template obeys (they matter — the output is pasted into a PR comment):
+`##` for top sections, `###` for sub-findings, `<details><summary>` to collapse the verbose
+tables, task lists for actionable items, fenced blocks with a language hint, a header
+separator row on every table, no raw HTML beyond `<details>`/`<summary>`/`<br>`, and a
+literal `\|` for any pipe appearing inside a table cell.
 
-> Ninguno / o lista:
 
-**1. `[tag]` {título corto}**
-📁 `path/to/file.go:42`
-```go
-// código problemático (copiado del diff)
-```
-**Problema**: {explicación en lenguaje developer — qué pasa en runtime}
-**Fix**:
-```go
-// código corregido
-```
+## Scan workflow → `references/scan-workflow.md`
 
----
+When the subcommand is **scan**, read
+**[`references/scan-workflow.md`](references/scan-workflow.md)** — it carries the scan-only
+steps: check out `main` first, the deep rawQuery audit, the unused go-bricks feature sweep,
+the three Phase 3b tables as scan artifacts, and the phased remediation roadmap (≤400 lines
+/ ≤10 files per phase, one branch per phase from `main`, P0-P4 with its sequencing rules).
 
-### 🔧 Debe corregirse
+A **review** never reads that file. Everything before this line applies to both subcommands.
 
-> **Regla dura de esta sección: todo ítem lleva su PROPUESTA CONCRETA, nunca solo el
-> problema.** Según el tipo de hallazgo:
-> - **Nombre de variable/función/tipo/constante** → dar el **nombre propuesto** + bloque
->   ```suggestion``` con la línea ya corregida (renombre de un solo sitio) o `gofmt -r`
->   (multi-sitio). Ver check 9.
-> - **Código en el archivo/capa equivocada** → dar el **`git mv` al `.go` que le
->   corresponde** según la estructura de arquitectura (mappers → `mapper.go`, DTOs →
->   `dto.go`, errores → `errors.go`, queries → `queries.go`, interfaz de repo →
->   `repository.go`, config/wiring → `module.go`, handlers HTTP → `http.go`, etc. —
->   ver checks 8b/8c). Si es contenido mal ubicado *dentro* de un archivo, usar
->   ```suggestion```; si es el archivo entero, `git mv`.
-> - **Bug/error de runtime** → dar el diff before→after concreto (ver Phase 3).
-> - **Diseño (fuga de decisión / interfaz shallow / duplicación)** → dar el **conteo**
->   (N sitios · M autoridades, o la evidencia de costo en git) + el **dueño propuesto**
->   (paquete/archivo que debe poseer la decisión, o la fuente de verdad del hecho) +
->   la etiqueta de confianza. Ver checks 19/20. Los `speculative` NO van aquí, van a
->   "Para el próximo commit".
->
-> Un ítem que dice "mejorar el nombre", "reubicar esto" o "revisar la estructura" **sin la
-> propuesta concreta (nombre exacto / ruta destino / diff) NO está listo** — no se emite así.
-> Lo mismo aplica a diseño: "considerar consolidar", "está muy duplicado" o "esta interfaz
-> es rara" **sin conteo y sin dueño propuesto NO se emite**.
-
-- [ ] **`path/to/file.go:42`** — `[tag]` {descripción developer-friendly: qué está mal, qué pasa en runtime, cómo corregir}
-- [ ] **`path/to/file.go:80`** — `[tag]` {descripción}
-- [ ] **`path/to/file.go:24`** — `[naming]` sugerencia: renombrar `{actual}` → `{propuesto}` ({regla}). Seguir una nomenclatura más clara y diciente. *(sugerencia, no bloquea)*
-  ```suggestion
-  {la línea file.go:24 completa, ya con el nombre corregido}
-  ```
-  _(un bullet por cada fila real de la tabla de nombres; `suggestion` sólo para renombres de un solo sitio — multi-sitio va a la tabla con `gofmt -r`)_
-- [ ] **`path/to/file.go`** — `[layout]` mover `{Tipo/func}` a `{archivo destino}.go` para cumplir la estructura de la arquitectura ({razón: mappers en mapper.go / config en module.go / etc.}). Seguir una organización más cohesiva. *(sugerencia, no bloquea)*
-  ```bash
-  git mv internal/modules/<mod>/<capa>/<origen>.go internal/modules/<mod>/<capa>/<destino>.go
-  ```
-- [ ] **`path/to/file.go:73`** — `[design]` la decisión "{pregunta}" se resuelve en **{N} sitios** con **{M} autoridades distintas** (`{autoridad A}`, `{autoridad B}`); cambiar la regla obliga a tocar los {N}. Proponer que la posea `{paquete/archivo destino}` y que el llamador quede en 1 línea. *(confianza: strong — no cambia ninguna regla de negocio)*
-- [ ] **`path/to/file.go:29`** — `[design]` `{param}` es un seam hipotético: {X} menciones no-test, **{Y} implementación real**, `nil` en {Z} tests. Que el adaptador lo reciba en el constructor y la interfaz quede `(ctx, req)` — desaparecen {Z} argumentos `nil`. *(confianza: strong)*
-- [ ] **`fileA.go:160` ↔ `fileB.go:915`** — `[dry]` mismo comportamiento, ~{N} líneas copiadas; el fix de `{regla}` ya tuvo que aterrizar 2 veces ({commits/tickets}). Un solo path parametrizado por `{descriptor existente}`; la interfaz no cambia. *(confianza: strong)*
-
----
-
-### 💡 Oportunidades go-bricks
-
-- [ ] **`path/to/file.go:45`** — `[go-bricks]` {lo que el PR hace manualmente} → usar `{go-bricks type/function}` ({beneficio concreto})
-
----
-
-### 🔒 Auditoría rawQuery / SQL
-
-| # | Archivo | Tipo | Riesgo | Detalle |
-|---|---------|------|--------|---------|
-| 1 | `repo/queries.go:15` | `f.Raw()` | ✅ Safe | Args parametrizados |
-| 2 | `repo/legacy.go:30` | `fmt.Sprintf+SQL` | ❌ BLOCKER | Inyección SQL |
-| 3 | `repo/queries.go:45` | raw const | ⚠️ Migrable | Builder puede expresarlo |
-
----
-
-### 📌 Para el próximo commit
-
-- {item 1 — forward-looking, no bloquea este PR}
-- {item 2}
-- go-bricks v{current} → v{latest} disponible
-
-<details>
-<summary>📊 Resumen de validación (click para expandir)</summary>
-
-| Verificación | Estado | Notas |
-|:--|:--:|:--|
-| **Base de evidencia (Phase 0)** | | |
-| `go build ./...` | ✅/❌/⚠️ | |
-| `go vet ./...` | ✅/❌/⚠️ | |
-| `go test ./...` | ✅/❌/⚠️ | cobertura por paquete tocado |
-| `golangci-lint run ./...` | ✅/❌/⚠️ | comparado contra `origin/main` |
-| `go test -race` | ✅/N/A | sólo si el diff toca concurrencia |
-| Modernización (`go fix -diff`) | ✅/❌/N/A | |
-| **go-bricks** | | |
-| Sin tipos reinventados | ✅/❌/⚠️ | |
-| rawQuery / SQL safety | ✅/❌/⚠️ | |
-| Sin llamados a stored procedures | ✅/❌ | BLOCKER si hay SP |
-| Límites de capa correctos | ✅/❌/⚠️ | |
-| Cableado de módulo | ✅/N/A | |
-| Patrones de BD | ✅/N/A | |
-| Entity/Row mapping | ✅/N/A | |
-| Construcción queries (builder+Entity vs const) | ✅/❌/N/A | |
-| Sin andamiaje muerto (Entity[T] usado) | ✅/❌/N/A | |
-| Ubicación archivos/structs | ✅/N/A | |
-| Cohesión y minimalismo de archivos | ✅/❌/N/A | |
-| Contenido de cada archivo = su responsabilidad | ✅/❌/N/A | |
-| Patrones handler | ✅/N/A | |
-| Llamadas externas httpclient | ✅/N/A | |
-| Integración bus (nombres, AutoAck, DLQ, idempotencia) | ✅/❌/⚠️/N/A | |
-| Patrones de test | ✅/N/A | |
-| Sin código duplicado | ✅/❌ | |
-| Nombres y convenciones | ✅/❌ | |
-| Diseño de firmas (ctx/error/params) | ✅/❌ | |
-| Config completa | ✅/N/A | |
-| Version bump en config.yml (+1 patch) | ✅/❌ | |
-| **Bugs & code smells** | | |
-| Manejo de errores | ✅/❌/⚠️ | |
-| Sin bugs de concurrencia | ✅/N/A | |
-| Sin resource leaks | ✅/❌/⚠️ | |
-| Fail-closed en fallos | ✅/N/A | |
-| Calidad de tests | ✅/❌/⚠️ | |
-| **Diseño y duplicación (Fase 3b)** | | |
-| Sin fugas de decisión (una autoridad por decisión) | ✅/❌/N/A | {N} sitios / {M} autoridades |
-| Sin interfaces shallow ni params pass-through | ✅/❌/N/A | |
-| Sin concerns fusionados (telemetría independiente) | ✅/❌/N/A | |
-| DRY — cada hecho con una sola fuente de verdad | ✅/❌/N/A | |
-| Guard de sobre-aplicación DRY evaluado | ✅/N/A | duplicación accidental tolerada a propósito |
-| Idioms de Go (Uber) | ✅/❌/⚠️ | |
-| **go-bricks discovery** | | |
-| Versión go-bricks | ⚠️/✅ | |
-| Oportunidades go-bricks | ✅/❌ | {N} encontradas |
-| **Scope** | | |
-| Scope contenido | ✅/❌ | |
-| Justificaciones del autor honradas | ✅/⚠️ | ⚠️ si no pude leer los comentarios del PR |
-
-</details>
-
-<details>
-<summary>📝 Nombres — propuestas de renombrado</summary>
-
-| # | Archivo | Actual | **Propuesto** | Razón |
-|---|---------|--------|---------------|-------|
-| 1 | `path/file.go:24` | `{nombre actual}` | `{nombre propuesto}` | {regla en una línea} |
-| — | — | Todas las convenciones seguidas ✅ | — | — |
-
-Verificado: receptores, `ctx` primero, `error` último, acrónimos (`ID`/`URL`/`HTTP`),
-stuttering, alias de import, palabras ruido (`Data`/`Info`/`Manager`), verbos vacíos,
-constantes autodescriptivas.
-
-</details>
-
-<details>
-<summary>🧱 Diseño — profundidad de módulos y duplicación (checks 19-20)</summary>
-
-| # | Decisión / interfaz | Sitios | Autoridades | Confianza | Tipo de seam | **Dueño propuesto** |
-|---|---|---:|---:|---|---|---|
-| 1 | `path/file.go:73` — "{la decisión, como pregunta}" | {N} | {M} | strong | in-process / ports & adapters / local-substitutable | `{paquete/archivo que debe poseerla}` |
-| — | — | — | — | — | — | Sin fugas detectadas ✅ |
-
-| # | Hecho duplicado | Sabor | Evidencia de costo | **Fuente de verdad propuesta** |
-|---|---|---|---|---|
-| 1 | `fileA.go:160` ↔ `fileB.go:915` | A · código | {commit/ticket donde el fix aterrizó 2 veces} | un solo path + descriptor de operación |
-| 2 | `codes.go` ↔ `messages.go` | B · datos | {55 vs 44, nada lo valida} | tabla indexada por rc + 1 test de tabla |
-| — | — | — | — | Sin duplicación de conocimiento ✅ |
-
-Tolerado a propósito (duplicación accidental, no misma razón de cambio): {lista o "ninguno"}.
-
-</details>
-
-**Veredicto**: ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
-```
-
-### Template — English (when `LANG=EN`)
-
-```markdown
-## PR Review #{number} — {title}
-
-📋 **{count} files** | **+{prodLOC} prod / +{testLOC} test lines** (≤400 gate on prod) | **Risk**: {HIGH/MEDIUM/LOW} | **go-bricks**: v{version}
-
-### ❌ Blockers
-
-> None / or list:
-
-**1. `[tag]` {short title}**
-📁 `path/to/file.go:42`
-```go
-// problematic code (copied from diff)
-```
-**Issue**: {developer-language explanation — what happens at runtime}
-**Fix**:
-```go
-// corrected code
-```
-
----
-
-### 🔧 Should fix
-
-> **Hard rule for this section: every item carries its CONCRETE PROPOSAL, never just the
-> problem.** By finding type:
-> - **Variable/function/type/constant name** → give the **proposed name** + a
->   ```suggestion``` block with the corrected line (single-site) or `gofmt -r`
->   (multi-site). See check 9.
-> - **Code in the wrong file/layer** → give the **`git mv` to the `.go` it belongs in**
->   per the architecture layout (mappers → `mapper.go`, DTOs → `dto.go`, errors →
->   `errors.go`, queries → `queries.go`, repo interface → `repository.go`, config/wiring
->   → `module.go`, HTTP handlers → `http.go`, etc. — see checks 8b/8c). Content misplaced
->   *inside* a file → ```suggestion```; a whole file → `git mv`.
-> - **Runtime bug** → give the concrete before→after diff (see Phase 3).
-> - **Design (leaked decision / shallow interface / duplication)** → give the **count**
->   (N sites · M authorities, or the git cost evidence) + the **proposed owner** (the
->   package/file that should own the decision, or the fact's source of truth) + the
->   confidence label. See checks 19/20. `speculative` items do NOT belong here — they go
->   to "For the next commit".
->
-> An item that says "improve the name", "relocate this" or "review the structure" **without
-> the concrete proposal (exact name / destination path / diff) is NOT ready** — don't emit it.
-> Same for design: "consider consolidating", "this is very duplicated" or "this interface
-> feels off" **without a count and a proposed owner is NOT emitted**.
-
-- [ ] **`path/to/file.go:42`** — `[tag]` {developer-friendly description: what's wrong, runtime impact, how to fix}
-- [ ] **`path/to/file.go:80`** — `[tag]` {description}
-- [ ] **`path/to/file.go:24`** — `[naming]` suggestion: rename `{current}` → `{proposed}` ({rule}). Follow a clearer, more meaningful nomenclature. *(suggestion, non-blocking)*
-  ```suggestion
-  {the full file.go:24 line, already with the corrected name}
-  ```
-  _(one bullet per real row of the naming table; `suggestion` only for single-site renames — multi-site goes to the table with `gofmt -r`)_
-- [ ] **`path/to/file.go`** — `[layout]` move `{Type/func}` to `{destination}.go` to comply with the architecture layout ({reason: mappers in mapper.go / config in module.go / etc.}). Follow a more cohesive organization. *(suggestion, non-blocking)*
-  ```bash
-  git mv internal/modules/<mod>/<layer>/<source>.go internal/modules/<mod>/<layer>/<dest>.go
-  ```
-- [ ] **`path/to/file.go:73`** — `[design]` the decision "{question}" is answered at **{N} sites** by **{M} distinct authorities** (`{authority A}`, `{authority B}`); changing the rule means touching all {N}. Propose `{destination package/file}` owns it, leaving the caller at 1 line. *(confidence: strong — no business rule changes)*
-- [ ] **`path/to/file.go:29`** — `[design]` `{param}` is a hypothetical seam: {X} non-test mentions, **{Y} real implementation**, `nil` in {Z} tests. Let the adapter take it at construction and the interface become `(ctx, req)` — {Z} `nil` arguments disappear. *(confidence: strong)*
-- [ ] **`fileA.go:160` ↔ `fileB.go:915`** — `[dry]` same behavior, ~{N} hand-copied lines; the `{rule}` fix already had to land twice ({commits/tickets}). One path parameterized by `{existing descriptor}`; interface unchanged. *(confidence: strong)*
-
----
-
-### 💡 go-bricks opportunities
-
-- [ ] **`path/to/file.go:45`** — `[go-bricks]` {what the PR does manually} → use `{go-bricks type/function}` ({concrete benefit})
-
----
-
-### 🔒 rawQuery / SQL audit
-
-| # | File | Type | Risk | Detail |
-|---|------|------|------|--------|
-| 1 | `repo/queries.go:15` | `f.Raw()` | ✅ Safe | Args parameterized |
-| 2 | `repo/legacy.go:30` | `fmt.Sprintf+SQL` | ❌ BLOCKER | SQL injection |
-| 3 | `repo/queries.go:45` | raw const | ⚠️ Migratable | Builder can express it |
-
----
-
-### 📌 For the next commit
-
-- {item 1 — forward-looking, doesn't block this PR}
-- {item 2}
-- go-bricks v{current} → v{latest} available
-
-<details>
-<summary>📊 Validation summary (click to expand)</summary>
-
-| Check | Status | Notes |
-|:--|:--:|:--|
-| **Evidence base (Phase 0)** | | |
-| `go build ./...` | ✅/❌/⚠️ | |
-| `go vet ./...` | ✅/❌/⚠️ | |
-| `go test ./...` | ✅/❌/⚠️ | coverage per touched package |
-| `golangci-lint run ./...` | ✅/❌/⚠️ | compared against `origin/main` |
-| `go test -race` | ✅/N/A | only if the diff touches concurrency |
-| Modernization (`go fix -diff`) | ✅/❌/N/A | |
-| **go-bricks** | | |
-| No reinvented types | ✅/❌/⚠️ | |
-| rawQuery / SQL safety | ✅/❌/⚠️ | |
-| No stored procedure calls | ✅/❌ | BLOCKER if any SP |
-| Layer boundaries | ✅/❌/⚠️ | |
-| Module wiring | ✅/N/A | |
-| DB patterns | ✅/N/A | |
-| Entity/Row mapping | ✅/N/A | |
-| Query construction (builder+Entity vs const) | ✅/❌/N/A | |
-| No dead scaffolding (Entity[T] used) | ✅/❌/N/A | |
-| File/struct placement | ✅/N/A | |
-| File cohesion & minimalism | ✅/❌/N/A | |
-| File content matches its responsibility | ✅/❌/N/A | |
-| Handler patterns | ✅/N/A | |
-| External calls httpclient | ✅/N/A | |
-| Bus integration (names, AutoAck, DLQ, idempotency) | ✅/❌/⚠️/N/A | |
-| Test patterns | ✅/N/A | |
-| No duplicate code | ✅/❌ | |
-| Naming & conventions | ✅/❌ | |
-| Signature design (ctx/error/params) | ✅/❌ | |
-| Config complete | ✅/N/A | |
-| Version bump in config.yml (+1 patch) | ✅/❌ | |
-| **Bugs & code smells** | | |
-| Error handling | ✅/❌/⚠️ | |
-| No concurrency bugs | ✅/N/A | |
-| No resource leaks | ✅/❌/⚠️ | |
-| Fail-closed on errors | ✅/N/A | |
-| Test quality | ✅/❌/⚠️ | |
-| **Design & duplication (Phase 3b)** | | |
-| No leaked decisions (one authority per decision) | ✅/❌/N/A | {N} sites / {M} authorities |
-| No shallow interfaces or pass-through params | ✅/❌/N/A | |
-| No fused concerns (telemetry independent) | ✅/❌/N/A | |
-| DRY — every fact has one source of truth | ✅/❌/N/A | |
-| DRY over-application guard applied | ✅/N/A | accidental duplication deliberately tolerated |
-| Go idioms (Uber) | ✅/❌/⚠️ | |
-| **go-bricks discovery** | | |
-| go-bricks version | ⚠️/✅ | |
-| go-bricks opportunities | ✅/❌ | {N} found |
-| **Scope** | | |
-| Scope contained | ✅/❌ | |
-| Author's prior justifications honored | ✅/⚠️ | ⚠️ if PR conversation unreadable |
-
-</details>
-
-<details>
-<summary>📝 Naming — rename proposals</summary>
-
-| # | File | Current | **Proposed** | Reason |
-|---|------|---------|--------------|--------|
-| 1 | `path/file.go:24` | `{current name}` | `{proposed name}` | {rule, one line} |
-| — | — | All conventions followed ✅ | — | — |
-
-Checked: receivers, `ctx` first, `error` last, initialisms (`ID`/`URL`/`HTTP`),
-stuttering, import aliases, noise words (`Data`/`Info`/`Manager`), empty verbs,
-self-describing constants.
-
-</details>
-
-<details>
-<summary>🧱 Design — module depth & duplication (checks 19-20)</summary>
-
-| # | Decision / interface | Sites | Authorities | Confidence | Seam type | **Proposed owner** |
-|---|---|---:|---:|---|---|---|
-| 1 | `path/file.go:73` — "{the decision, as a question}" | {N} | {M} | strong | in-process / ports & adapters / local-substitutable | `{package/file that should own it}` |
-| — | — | — | — | — | — | No leaks found ✅ |
-
-| # | Duplicated fact | Flavor | Cost evidence | **Proposed source of truth** |
-|---|---|---|---|---|
-| 1 | `fileA.go:160` ↔ `fileB.go:915` | A · code | {commit/ticket where the fix landed twice} | one path + operation descriptor |
-| 2 | `codes.go` ↔ `messages.go` | B · data | {55 vs 44, nothing validates it} | table keyed by rc + 1 table test |
-| — | — | — | — | No knowledge duplication ✅ |
-
-Deliberately tolerated (accidental duplication — not the same reason to change): {list or "none"}.
-
-</details>
-
-**Verdict**: ✅ Approve / ⚠️ Not verified ({reason}) / ❌ {N} blockers remain
-```
-
-Mark checks as N/A when the PR doesn't touch that layer (e.g., domain-only
-PR → DB patterns, handler patterns, external calls are all N/A).
-
-The **Naming & conventions** table is always present — even if all names are
-correct, show the table with a "Todas las convenciones seguidas ✅" (ES) /
-"All naming conventions followed ✅" (EN) row.
-
-File name: `pr-{PR_NUMBER}-review.md` (review) or `scan-{path-slug}-audit.md` (scan).
-
----
-
-## Scan-specific workflow (scan subcommand)
-
-When running `/go-dev-technical scan <path>`, follow this order:
-
-### Step 0 — Check out `main` before scanning (MANDATORY)
-
-**The scan runs on `main`, never on a feature branch.** Checking out the latest
-`main` is a required precondition, not an option — a scan of a stale or feature
-checkout reports findings already fixed upstream and misses ones just merged. Do
-this first, every time, before any grep runs:
-
-```bash
-git fetch origin
-git checkout main
-git pull --ff-only origin main
-git rev-parse --short HEAD    # record the audited commit for the report header
-```
-
-This is the default and expected path: whenever the working tree is **clean**,
-switch to `main` and pull — even if the user is currently on a feature branch (a
-clean checkout is restored trivially with `git checkout -`).
-
-**Only exception — a dirty working tree.** If (and only if) there are uncommitted
-changes that a checkout would clobber, do NOT switch branches. Instead check out the
-latest `main` in an isolated worktree, exactly like the review flow (Step 0.1), and
-run the scan there:
-  ```bash
-  git fetch origin
-  WT="<scratchpad>/scan-main"
-  git worktree add --detach "$WT" origin/main
-  cd "$WT"          # run the scan here; <path> is relative to this worktree
-  ```
-  Remove it when done (from the repo root, never from inside the worktree):
-  ```bash
-  cd <repo-root> && git worktree remove --force "$WT" && git worktree prune
-  ```
-
-Report which commit of `main` the audit ran against (`git rev-parse --short HEAD`)
-in the scan header, so the findings are reproducible.
-
-### Step 1 — Discover go-bricks version and features
-
-```bash
-grep 'go-bricks' go.mod
-BRICKS=$(go env GOMODCACHE)/github.com/gaborage/go-bricks@$(grep go-bricks go.mod | awk '{print $2}')
-```
-
-### Step 2 — Run all anti-pattern checks
-
-Run every grep from checks 1, 1b, 2, 4, 5, 6, 7, 8, 9, 11, 12, 12b, 13, **19, 20, 21**
-against `<path>`. Replace `<changed-files>` with `<path>` and `<module>` with each module
-under `<path>`.
-
-**Phase 3b on a scan is where it pays most** — a PR diff shows one site of a leak, a scan
-sees all N. Run it repo-wide, not per-module: the whole point of check 19 is the count
-across modules, and check 20b/20c only show up when you compare siblings.
-
-- Do a full **19.0 loop** for each cross-cutting concern the codebase has (response
-  assembly, error rendering, auth exit, business-code construction, customer/entity
-  resolution, module bootstrap) — those are where leaks live
-- Build the **depth table** (19f) and both **duplication tables** (20) as first-class scan
-  artifacts, next to the rawQuery audit table
-- Apply the **20e over-application guard** to every DRY candidate before it reaches the
-  roadmap, and list what you deliberately tolerated. A scan that proposes consolidating
-  everything it saw is a scan nobody will execute
-
-**The Phase 3b gate applies here verbatim** — all 8 strictness rules, including both
-mandatory labels per check-19 finding and the written 20e answer. A scan report whose
-design/duplication tables are absent, or present but countless, is incomplete: emit the
-tables with their "sin fugas detectadas ✅" / "sin duplicación de conocimiento ✅" rows
-rather than dropping them, so the reader can tell *checked and clean* from *not checked*.
-
-### Step 3 — rawQuery deep audit
-
-For every file in `<path>/**/repository/`:
-
-1. Find all raw SQL (`const`, `var`, or inline strings with SQL keywords)
-2. Find all `Raw()`, `Expr()`, `MustExpr()` usages
-3. For each, determine:
-   - Can QueryBuilder express this? (check JOIN, subquery, expression support)
-   - Are all dynamic values parameterized (in `args`, never in SQL string)?
-   - Is there a comment explaining WHY the builder can't express it?
-4. Categorize: ❌ BLOCKER (injection risk) / ⚠️ SHOULD-FIX (builder can replace) / ✅ OK (justified)
-5. Build the rawQuery audit table for the report
-
-### Step 4 — Unused go-bricks feature sweep
-
-Compare what the scanned code uses vs what go-bricks provides:
-
-```bash
-# What go-bricks packages are imported?
-grep -rn "go-bricks" <path> --include="*.go" | grep import | sort -u
-
-# What QueryBuilder features are used?
-grep -rn "\.Select\|\.Insert\|\.Update\|\.Delete\|\.InnerJoinOn\|\.LeftJoinOn\|\.Expr\|\.Raw\|\.Paginate\|\.Exists\|\.InSubquery" <path> --include="*.go" | sort -u
-
-# What go-bricks test helpers are used?
-grep -rn "MockDatabase\|MockTx\|NewMockRows\|fixtures\." <path> --include="*_test.go" | sort -u
-
-# What go-bricks error types are used?
-grep -rn "server\.New.*Error\|NewAppError\|NewBusinessLogicError" <path> --include="*.go" | sort -u
-```
-
-For each unused go-bricks feature that applies to the scanned code:
-- Identify WHERE in the code it could be used (file:line)
-- Explain WHAT go-bricks feature replaces it
-- Explain WHY the go-bricks version is better (safety, consistency, less code)
-
-### Step 5 — Report
-
-Beyond the rawQuery audit table, a scan report MUST carry the three Phase 3b tables
-(depth 19f, and both duplication tables from check 20) as first-class artifacts, plus the
-line naming what duplication was deliberately tolerated per 20e.
-
-Use the same template as review but:
-- Replace `## Revisión PR #{number}` with `## Auditoría técnica — {path}`
-- Remove PR-specific sections (sizing, title, diff, scope containment)
-- Include the rawQuery audit table
-- Include the unused go-bricks features section
-- Include all anti-pattern findings with file:line evidence
-- **Include the remediation roadmap (Step 6)** — a scan without a plan is a list of
-  complaints
-
-### Step 6 — Remediation roadmap (MANDATORY for `scan`)
-
-A list of 40 findings is not actionable. The deliverable of `scan` is **an ordered,
-sized execution plan**: what to fix, in what order, and split into phases a developer
-can actually merge. Same phase discipline as `/migrate` (see
-`novo-legacy-migration-endpoint`), because these fixes travel through the same
-pipeline.
-
-#### 6.1 Hard constraints per phase (inherited from `/migrate`)
-
-| Constraint | Value | Source |
-|---|---|---|
-| Max new lines per phase (impl + tests) | **≤400** | NKH1 sizing / `/migrate` |
-| Max files per phase | **≤10** | NKH1 sizing / `/migrate` |
-| Branch | `feature/{TICKET}-{slug}-{n}`, **always from `main`** | `/migrate` |
-| Per phase | tests + `make check` (0 issues) + **semantic version bump** (minor `feat` / patch `fix`·`refactor`) | `/migrate` |
-| Merge order | one phase merged before the next starts | `/migrate` |
-| Security fixes (SQL injection, PCI) | **≤300 lines**, surgical, first in the queue | stricter, as `parity-solve` |
-
-If a fix does not fit, **split it** — never widen a phase. A "phase" that touches
-three modules is two phases.
-
-#### 6.2 Prioritization
-
-Order by **risk × blast radius**, not by how easy it is:
-
-| Prio | What goes here | Why first |
-|:--:|---|---|
-| **P0** | SQL injection, PCI leaks (PAN/CVV in logs), tenant-isolation breaks, resource leaks in hot paths | Exploitable or already leaking |
-| **P1** | Correctness: swallowed errors, lost error chain, goroutine leaks, fail-open branches | Silent wrong behavior in production |
-| **P2** | Layer violations, raw `net/http` / `sql.DB` instead of go-bricks, duplicated clients | Structural debt that multiplies with each new module |
-| **P3** | rawQuery migratable to QueryBuilder, dead scaffolding, duplicated constants/types, **leaked decisions (19a) and DRY flavor-B violations (20b/20c) rated `strong`** | Maintenance cost, no runtime risk — but every new module inherits the leak |
-| **P4** | Naming, missing docs, modernization (`go fix`), Go style/perf idioms (21c) | Readability; batch them, never a phase of their own |
-
-Two sequencing rules that override raw priority:
-
-1. **Enablers first.** If five P3 findings all disappear once one shared helper
-   exists, that helper is phase 1 even though it is P3 — it converts five phases
-   into one.
-2. **Never mix priorities in one phase.** A P0 phase must be reviewable in ten
-   minutes; padding it with renames destroys that.
-3. **Close the leak before you build on it.** A `strong` check-19 finding whose fix makes
-   two or three other findings shrink or vanish is an enabler by rule 1 — schedule it
-   early even at P3. Say which findings it shrinks. Conversely, a check-19 finding whose
-   destination does not exist yet is not a phase, it is a design task: keep it out of the
-   roadmap until the owner is decided.
-4. **Money-path consolidation is never a mechanical phase.** Any 19/20 finding on a flow
-   that decides whether funds moved, reversed, or are in doubt carries a per-branch parity
-   verification against the legacy source as part of its own phase estimate. If that
-   verification cannot be scheduled, the finding is deferred, not sized.
-5. **`speculative` findings never enter the roadmap.** They go in the deferred list with
-   the unresolved tension written out.
-
-#### 6.3 Estimating a phase
-
-For each finding, estimate `~N líneas` = impl + tests. Rules of thumb, stated as
-estimates and never as fact:
-
-| Fix type | Typical |
-|---|---|
-| Constant/alias rename (mechanical, IDE-assisted) | ~5-20 líneas, muchos archivos → cuidado con el cap de 10 files |
-| Wrapping an error / adding `%w` + test | ~10-25 líneas |
-| Adding a missing error-path test | ~20-40 líneas |
-| Migrating one raw `const` query to QueryBuilder + test | ~40-80 líneas |
-| Replacing a raw `net/http` client with the connector + tests | ~120-200 líneas |
-| Extracting a shared helper consumed by N call sites | ~80-150 líneas + N × ~5 |
-| Cerrar una fuga de decisión (funnel único) + migrar N sitios | ~120-200 líneas + N × ~8, **borra** el bloque repetido en cada sitio → el neto puede ser negativo; decirlo |
-| Quitar un param pass-through de una interfaz de N métodos (local-substitutable) | ~40-80 líneas impl, pero toca **muchos** archivos de test → el cap de **10 files** es el que parte la fase, no el de líneas. Contar los archivos ANTES de estimar |
-| Mover una política detrás de un port (ports & adapters) | ~100-180 líneas; los adaptadores ya existen — el costo real es la verificación de paridad de la política que se mueve |
-| Colapsar dos clones en un path + descriptor | ~60-120 líneas, **menos** las ~N copiadas que se borran |
-| Tabla rc→mensaje + constructor + test de tabla | ~80-140 líneas + N × ~2 en call sites |
-| Bootstrap común de módulos + 1 test | ~60-100 líneas, borra ~18 × M en los M módulos |
-
-When a rename touches more than 10 files, the file cap — not the line cap — is what
-splits it. Say so explicitly in the roadmap.
-
-#### 6.4 Roadmap output format
-
-```
-Roadmap de remediación — {path}
-Hallazgos: {N} (P0:{a} P1:{b} P2:{c} P3:{d} P4:{e})   ·   Fases estimadas: {F}
-
-Fase 1 · P0 · feature/{TICKET}-sqlsafe-1          ~{X} líneas · {n} files
-  ├─ repo/legacy.go:30   fmt.Sprintf+SQL → QueryBuilder            ~60
-  └─ repo/legacy.go:78   f.Raw() sin parametrizar → f.Raw(cond,?)  ~20
-  Desbloquea: nada · Bloqueado por: nada
-
-Fase 2 · P1 · feature/{TICKET}-errchain-1         ~{Y} líneas · {n} files
-  └─ service/card.go:112  %s → %w (rompe errors.Is en 3 callers)   ~15
-  Desbloquea: Fase 5 (tests de error path)
-
-Fase 3 · P2 · feature/{TICKET}-connector-1        ~{Z} líneas · {n} files
-  └─ cards/processing → platform/connector (elimina net/http crudo) ~180
-  Enabler: colapsa las fases 6 y 7 en una
-
-...
-
-Diferido (no entra en fases):
-  · {hallazgo}  — {por qué no ahora: bloqueado por X / requiere decisión de producto}
-
-Batch final · P4 · feature/{TICKET}-naming-1      ~{W} líneas · {n} files
-  └─ 12 renombrados (tabla de nombres) — mecánico, un solo commit
-```
-
-Rules for the roadmap:
-
-- **Every phase states `~líneas` and `files`** and both must be under the cap. If
-  a row exceeds it, it is already split in the output — do not emit an over-cap phase
-  and add "habría que dividirlo".
-- **Declare dependencies** (`Bloqueado por` / `Desbloquea`) so the order is not
-  arbitrary. A phase with no dependencies can be parallelized by another developer;
-  say which ones those are.
-- **`Diferido` is a first-class section.** Findings that need a product decision, or
-  that depend on work outside the scanned path, go here with the reason — not
-  silently dropped, not padded into a phase.
-- **Total estimate at the top**, and the honest caveat that line counts are
-  estimates from static reading, not measurements.
-- **Present the roadmap and stop.** `scan` never creates branches and never edits
-  code — it produces the plan. Branch creation follows the `/migrate` flow (ask for
-  the Jira ticket, `git checkout main && git pull`, one branch per phase).
-
-File name: `scan-{path-slug}-audit.md` — same temp-dir rule as the review report.
-
----
 
 ## References
 
