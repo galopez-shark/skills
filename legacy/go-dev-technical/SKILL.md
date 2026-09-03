@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.10.0"
+  version: "2.11.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -2066,16 +2066,36 @@ Confidence label is **mandatory** on every 19 finding, and it gates severity:
 | **worth exploring** | Pattern real, benefit clear, exact shape of the fix still open | SHOULD-FIX (phrased as a proposal to validate) |
 | **speculative** | Diagnosis solid, but an unresolved tension (parity variation, money path) means the fix may not shrink the interface | "Para el próximo commit" — never a Should-fix bullet |
 
+**Seam type is the second mandatory label**, and it is not decoration: it says what kind of
+work the fix actually is, which is what makes the roadmap estimate honest. Confidence says
+*how sure*; seam type says *what shape*.
+
+| Seam type | What it means | Shape of the fix | Cost driver |
+|---|---|---|---|
+| **in-process** | The substitution point lives inside the same process/package; no external contract moves | Extract or consolidate code into an owner | Line count. Usually **net-negative** — the repeated block dies at every site |
+| **ports & adapters** | A domain core with ports behind which adapters are swappable (prod + mock, or two vendors) | Define the port, move policy behind it, keep the adapters | Test surface. The adapters already exist — the risk is in the policy that moves |
+| **local-substitutable** | The interface is already mockable but drags parameters that are not its business | **Shrink the interface** — the param does not move, it vanishes | **File count, not lines.** It touches every test that passed the param → the ≤10-file cap is what splits the phase, not the ≤400-line one |
+
+Rules that follow from the label:
+
+- **in-process** findings are the safe default: no contract changes, so `strong` + in-process
+  is the combination to schedule first
+- **ports & adapters** on a money path is never mechanical — it carries the per-branch
+  parity verification from 19e
+- **local-substitutable** must state the file count up front. A finding that says "~60
+  lines" and then touches 40 test files is a roadmap that will not survive contact
+
 #### 19f. How to report — the depth table is MANDATORY
 
 Any 19 finding goes into this table in the report (collapsed in `<details>`), and each row
 gets a matching Should-fix bullet with its destination:
 
-| # | Decisión / interfaz | Sitios | Autoridades | Confianza | **Dueño propuesto** |
-|---|---|---:|---:|---|---|
-| 1 | `path/file.go:73` — "¿qué status corresponde a este rc?" | 11 | 3 | strong | `internal/plataform/response.go` (funnel único) |
-| 2 | `path/file.go:29` — param de transporte en la interfaz | 53 menciones / 128 `nil` | 1 impl | strong | adaptador, en el constructor |
-| — | — | — | — | — | Sin fugas detectadas ✅ |
+| # | Decisión / interfaz | Sitios | Autoridades | Confianza | Tipo de seam | **Dueño propuesto** |
+|---|---|---:|---:|---|---|---|
+| 1 | `path/file.go:73` — "¿qué status corresponde a este rc?" | 11 | 3 | strong | in-process | `internal/plataform/response.go` (funnel único) |
+| 2 | `path/file.go:29` — param de transporte en la interfaz | 53 menciones / 128 `nil` | 1 impl | strong | local-substitutable | adaptador, en el constructor (~{N} archivos de test) |
+| 3 | `path/file.go:460` — "¿se movió el dinero?" | 6 | 4 | worth exploring | ports & adapters | módulo de outcome, resolvers como ports |
+| — | — | — | — | — | — | Sin fugas detectadas ✅ |
 
 ---
 
@@ -2350,6 +2370,22 @@ grep -rnE "\b(len|cap|new|copy|min|max|close|delete|append|error|string|int|any)
       lock
 - [ ] **Struct tags on every serialized field** — an untagged field silently changes the
       wire contract when the Go field is renamed
+- [ ] **`defer` for cleanup, not manual calls at the end** — the point is not elegance:
+      a manual `mu.Unlock()` / `rows.Close()` at the bottom of a function is silently
+      skipped the day someone adds an early `return` above it. `defer` survives that edit
+      (overlaps check 13 for the leak itself — report the leak there, the habit here)
+- [ ] **`init()` — flag it, but know the accepted exception**: registering into a
+      well-understood global registry (a `sql.Register` driver, an encoding codec) is
+      legitimate. **Business logic, config loading or I/O in `init()` is not.** Do not
+      report a driver registration as a finding
+- [ ] **Intentional embedding is declared as such** — when embedding is deliberate (to
+      satisfy an interface), it goes **first in the field list, separated by a blank
+      line**, and is documented. Embedding buried among regular fields reads as an
+      accident (pairs with the 21a rule against embedding in public structs)
+- [ ] **`Printf`-style wrappers end in `f`** — `Logf(format string, args ...any)`, never
+      `Log`. This is not cosmetic: `go vet`'s printf analyzer only checks verb/argument
+      agreement on functions it can recognize, so the missing `f` silently disables a
+      real check on every call site
 - [ ] **Do not shadow builtins or the package name**
 
 #### 21c. Style & performance idioms (NIT — batch them, never a phase of their own)
@@ -2363,8 +2399,24 @@ grep -rnE "\b(len|cap|new|copy|min|max|close|delete|append|error|string|int|any)
       emptiness with `len(s) == 0`, never `s != nil`
 - [ ] **Keyed struct literals** across package boundaries (positional literals break
       silently when a field is added) — overlaps 9b, report once
-- [ ] Reduce variable scope; declare at first use
-- [ ] Raw string literals instead of escaped quotes
+- [ ] Reduce variable scope; declare at first use. `:=` when the initial value makes the
+      type obvious; `var` with an explicit type when it is the zero value or the type is
+      not evident
+- [ ] Raw string literals (backticks) instead of repeated `\"` — regexes, SQL, Windows
+      paths
+- [ ] `&T{Field: v}` over `new(T)` followed by field-by-field assignment
+- [ ] **`nil` slice vs `[]T{}` matters in exactly one place: serialization.** JSON renders
+      `nil` as `null` and `[]T{}` as `[]`. Everywhere else they behave identically — so
+      never "defensively" convert, but **do** check which one the API contract promises
+      when the slice is serialized. A response that flips `[]` → `null` is a contract
+      break, not a style nit
+- [ ] Unexported package-level vars carry the `_` prefix (`_defaultTimeout`) so the wider
+      scope is visible at the use site; package-level vars declare an explicit type when
+      the initial value does not make it obvious
+- [ ] Methods ordered logically — constructor first, then exported methods roughly in call
+      order, unexported helpers near their caller. **Not alphabetical**, which scatters
+      related methods
+- [ ] A format string reused at several call sites is extracted to a named constant
 - [ ] Group similar declarations; import groups ordered (stdlib / external / internal);
       import aliases consistent with the rest of the repo (**one alias per package
       repo-wide** — the same type imported under several aliases makes every future grep
@@ -2374,6 +2426,56 @@ grep -rnE "\b(len|cap|new|copy|min|max|close|delete|append|error|string|int|any)
 
 Anything in 21c that `gofmt`, `golangci-lint` or `go fix` already reports belongs to
 Phase 0, not here. Emit only the residue.
+
+---
+
+### Phase 3b gate — applies to BOTH `review` and `scan` (MANDATORY)
+
+Phase 3b is **not optional and not "if there is time"**. It runs on every `review` and
+every `scan`, and each of its rows appears in the summary table with a ternary verdict.
+The asymmetry to respect: **finding nothing is a valid, expected outcome — not running the
+check is not.**
+
+The three ways this phase fails, and what each looks like:
+
+| Failure | What it looks like | Correct behavior |
+|---|---|---|
+| **Skipped** | The Phase 3b rows are missing from the summary table, or filled with ✅ without a count | Every row is ✅ / ❌ / ⚠️. ✅ means *checked and clean*, and for 19 it carries the counts you measured |
+| **Faked** | "Consider consolidating", "this looks duplicated", "the interface is odd" | No count, no owner → **not emitted**. Silence beats a vague finding |
+| **Over-fired** | Every similarity reported as a DRY violation; every long file as a shallow module | 20e guard answered in writing; 19e exclusions honored |
+
+**Strictness, stated as rules — these are not suggestions:**
+
+1. **No count, no finding.** 19 needs sites **and** authorities. 20 needs cost evidence
+   from git or two counters that disagree. 21 needs `file:line` plus the runtime
+   consequence. A Phase 3b bullet without its number is malformed output.
+2. **No proposed owner, no finding.** "Where should this live?" must be answered with a
+   package/file that exists or that you name explicitly. Same standard already enforced
+   for naming (check 9) and placement (checks 8b/8c).
+3. **Both labels or it does not ship.** Every check-19 finding carries **confidence**
+   (strong / worth exploring / speculative) **and** **seam type** (in-process / ports &
+   adapters / local-substitutable). Confidence gates severity; seam type gates the
+   estimate.
+4. **`speculative` never becomes a Should-fix.** It goes to "Para el próximo commit" with
+   the unresolved tension written out, or it is dropped.
+5. **19 and 20 never block a PR.** Only 21a can be a blocker, and only with a concrete
+   failure scenario. A pre-existing leak the author merely touched is framed as
+   *"this PR adds site N+1"* — never as a reason to reject.
+6. **The 20e guard is answered in writing.** The report states what duplication was
+   deliberately tolerated and why. A Phase 3b section that proposes consolidating
+   everything it saw is a failed review, not a thorough one.
+7. **Report once.** The same defect seen through three lenses is one finding, under the
+   lens that names its cause (see 20f). Do not pad the report by restating it as SRP, then
+   DRY, then shallow-module.
+8. **Money-path findings carry the parity instruction** or they are deferred. Never
+   propose consolidating a flow that decides whether funds moved as if it were mechanical.
+
+**Rule provenance — keep this honest.** Check 19 comes from Ousterhout's *A Philosophy of
+Software Design*; check 20 from Hunt & Thomas plus the Metz guard; check 21 from the Uber
+Go Style Guide (§2 guidelines → 21a/21b, §3 performance and §4 style → 21c, §5 patterns →
+table-driven tests and functional options). When one of those sources is revised and a
+rule here stops matching it, **update the rule** — do not let this phase drift into
+folklore, same standard as the References section.
 
 ---
 
@@ -2786,10 +2888,10 @@ constantes autodescriptivas.
 <details>
 <summary>🧱 Diseño — profundidad de módulos y duplicación (checks 19-20)</summary>
 
-| # | Decisión / interfaz | Sitios | Autoridades | Confianza | **Dueño propuesto** |
-|---|---|---:|---:|---|---|
-| 1 | `path/file.go:73` — "{la decisión, como pregunta}" | {N} | {M} | strong | `{paquete/archivo que debe poseerla}` |
-| — | — | — | — | — | Sin fugas detectadas ✅ |
+| # | Decisión / interfaz | Sitios | Autoridades | Confianza | Tipo de seam | **Dueño propuesto** |
+|---|---|---:|---:|---|---|---|
+| 1 | `path/file.go:73` — "{la decisión, como pregunta}" | {N} | {M} | strong | in-process / ports & adapters / local-substitutable | `{paquete/archivo que debe poseerla}` |
+| — | — | — | — | — | — | Sin fugas detectadas ✅ |
 
 | # | Hecho duplicado | Sabor | Evidencia de costo | **Fuente de verdad propuesta** |
 |---|---|---|---|---|
@@ -2964,10 +3066,10 @@ self-describing constants.
 <details>
 <summary>🧱 Design — module depth & duplication (checks 19-20)</summary>
 
-| # | Decision / interface | Sites | Authorities | Confidence | **Proposed owner** |
-|---|---|---:|---:|---|---|
-| 1 | `path/file.go:73` — "{the decision, as a question}" | {N} | {M} | strong | `{package/file that should own it}` |
-| — | — | — | — | — | No leaks found ✅ |
+| # | Decision / interface | Sites | Authorities | Confidence | Seam type | **Proposed owner** |
+|---|---|---:|---:|---|---|---|
+| 1 | `path/file.go:73` — "{the decision, as a question}" | {N} | {M} | strong | in-process / ports & adapters / local-substitutable | `{package/file that should own it}` |
+| — | — | — | — | — | — | No leaks found ✅ |
 
 | # | Duplicated fact | Flavor | Cost evidence | **Proposed source of truth** |
 |---|---|---|---|---|
@@ -3059,6 +3161,12 @@ across modules, and check 20b/20c only show up when you compare siblings.
   roadmap, and list what you deliberately tolerated. A scan that proposes consolidating
   everything it saw is a scan nobody will execute
 
+**The Phase 3b gate applies here verbatim** — all 8 strictness rules, including both
+mandatory labels per check-19 finding and the written 20e answer. A scan report whose
+design/duplication tables are absent, or present but countless, is incomplete: emit the
+tables with their "sin fugas detectadas ✅" / "sin duplicación de conocimiento ✅" rows
+rather than dropping them, so the reader can tell *checked and clean* from *not checked*.
+
 ### Step 3 — rawQuery deep audit
 
 For every file in `<path>/**/repository/`:
@@ -3096,6 +3204,10 @@ For each unused go-bricks feature that applies to the scanned code:
 - Explain WHY the go-bricks version is better (safety, consistency, less code)
 
 ### Step 5 — Report
+
+Beyond the rawQuery audit table, a scan report MUST carry the three Phase 3b tables
+(depth 19f, and both duplication tables from check 20) as first-class artifacts, plus the
+line naming what duplication was deliberately tolerated per 20e.
 
 Use the same template as review but:
 - Replace `## Revisión PR #{number}` with `## Auditoría técnica — {path}`
@@ -3173,7 +3285,8 @@ estimates and never as fact:
 | Replacing a raw `net/http` client with the connector + tests | ~120-200 líneas |
 | Extracting a shared helper consumed by N call sites | ~80-150 líneas + N × ~5 |
 | Cerrar una fuga de decisión (funnel único) + migrar N sitios | ~120-200 líneas + N × ~8, **borra** el bloque repetido en cada sitio → el neto puede ser negativo; decirlo |
-| Quitar un param pass-through de una interfaz de N métodos | ~40-80 líneas impl, pero toca **muchos** archivos de test → el cap de 10 files es el que parte la fase |
+| Quitar un param pass-through de una interfaz de N métodos (local-substitutable) | ~40-80 líneas impl, pero toca **muchos** archivos de test → el cap de **10 files** es el que parte la fase, no el de líneas. Contar los archivos ANTES de estimar |
+| Mover una política detrás de un port (ports & adapters) | ~100-180 líneas; los adaptadores ya existen — el costo real es la verificación de paridad de la política que se mueve |
 | Colapsar dos clones en un path + descriptor | ~60-120 líneas, **menos** las ~N copiadas que se borran |
 | Tabla rc→mensaje + constructor + test de tabla | ~80-140 líneas + N × ~2 en call sites |
 | Bootstrap común de módulos + 1 test | ~60-100 líneas, borra ~18 × M en los M módulos |
