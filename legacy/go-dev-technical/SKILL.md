@@ -1,10 +1,10 @@
 ---
 name: go-dev-technical
-description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name — and then reviews design depth: leaked decisions re-decided at N sites, shallow interfaces carrying pass-through params, DRY violations with no single source of truth, and Uber-Go-Style-Guide idiom breaks the linters miss; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main). Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, stuttering/noise-word/misleading identifiers, information leakage (one decision with N homes and M authorities), hypothetical seams (a param nil in every test), hand-synced parallel constant lists, copy-pasted module bootstrap, and unsafe Go idioms (mutex copied by value, panic in a request path, os.Exit outside main)."
+description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name — and then reviews design depth: leaked decisions re-decided at N sites, shallow interfaces carrying pass-through params, DRY violations with no single source of truth, and Uber-Go-Style-Guide idiom breaks the linters miss; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main). Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, stuttering/noise-word/misleading identifiers, information leakage (one decision with N homes and M authorities), hypothetical seams (a param nil in every test), hand-synced parallel constant lists, copy-pasted module bootstrap, unsafe Go idioms (mutex copied by value, panic in a request path, os.Exit outside main), a sentinel error compared with == so the branch never fires on a wrapped error, cancellation that loses its cause, and outdated Go for the module's version — every modern-stdlib rule gated on the go.mod directive so it never proposes an API the module cannot compile."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.12.0"
+  version: "2.13.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -351,7 +351,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 18b | Honor author's prior justifications | 5 | MANDATORY |
 | 19 / 19a-19f | Module depth & information leakage (leaked decision, shallow interface & pass-through params, temporal decomposition, fused concerns) | 3b | SHOULD-FIX |
 | 20 / 20a-20f | DRY — one authoritative representation (code clones, parallel lists, copy-pasted bootstrap, cost evidence, over-application guard) | 3b | SHOULD-FIX |
-| 21 / 21a-21c | Go idiom safety net (Uber Go Style Guide) | 3b | BLOCKER / SHOULD-FIX / NIT |
+| 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
 
 ---
 
@@ -1797,6 +1797,21 @@ Flag:
 - **Shadowed err**: inner `:=` silently discards outer err; use `=` instead
 - **Nil pointer after error check**: `if err != nil { ... }` followed by using the value without checking `nil`
 - **Deferred Close without error check**: `defer resp.Body.Close()` — should check or log the error
+- **`==` against a sentinel error** (BLOCKER): `if err == ErrNotFound` returns **false** for a
+  wrapped error, so the branch never runs and the failure is silent. This is the other half of
+  the `%w` rule — wrapping is pointless if the comparison does not unwrap. Use
+  `errors.Is(err, ErrNotFound)`, always:
+  ```bash
+  # Sentinel compared with == or != instead of errors.Is — silent wrong branch
+  grep -rnE '(if|&&|\|\|) *err *(==|!=) *[A-Za-z_.]*(Err|ErrNo)[A-Za-z_]*' <changed-files> --include='*.go' | grep -v _test.go
+  ```
+  The one legitimate `err == nil` / `err != nil` is the nil check — the pattern above targets
+  comparisons against a *named sentinel*, not against `nil`.
+- **Combining errors by hand**: `fmt.Errorf("%v; %w", e1, e2)` drops `e1` from the chain →
+  `errors.Join(e1, e2)` keeps both matchable (Go 1.20+)
+- **`errors.As` with a declared-then-passed variable**: `var pe *os.PathError; errors.As(err, &pe)`
+  → `pe, ok := errors.AsType[*os.PathError](err)` (Go 1.26+). NIT, not a defect — the old form
+  is correct, just noisier
 
 ### 12. Concurrency bugs (BLOCKER)
 
@@ -1827,8 +1842,11 @@ waits. Check these explicitly:
 - [ ] **`select` without `default` or a timeout case** blocks forever if the
       upstream goroutine dies before sending. Either `case <-ctx.Done():` or
       `case <-time.After(d):` must be present
-- [ ] **`time.Ticker` stopped**: `defer tick.Stop()` — a ticker without it leaks its
-      runtime timer for the process lifetime
+- [ ] **`time.Ticker` — check the module's Go version before flagging it.** On **Go < 1.23** a
+      ticker without `defer tick.Stop()` leaks its runtime timer. **On Go ≥ 1.23 the GC reclaims
+      unreferenced tickers**, so a missing `Stop()` is no longer a leak and `for range time.Tick(d)`
+      is legitimate. Do not report it on a modern module — that is a false positive. `Stop()` is
+      still correct when the ticker must stop while still referenced
 - [ ] **`time.Time` compared with `Equal()`**, never `==` (`==` also compares the
       monotonic reading and the location pointer, so two equal instants can differ)
 - [ ] **`sync.Map` compound operations**: never `Store`/`Delete` based on a previous
@@ -1839,6 +1857,20 @@ waits. Check these explicitly:
       and not an accidental deadlock
 - [ ] **`defer` inside a loop**: the deferred call runs at function exit, not at
       iteration end — N iterations hold N resources open
+- [ ] **`wg.Add(1)` + `go func(){ defer wg.Done() }()`** (Go 1.25+) → `wg.Go(func(){ ... })`.
+      Not cosmetic: it removes the unbalanced-`Add`/`Done` bug class by construction. A missing
+      `Done` deadlocks `Wait()`; an extra one panics. **BLOCKER when the counter is actually
+      unbalanced**, NIT when it is merely the old spelling
+- [ ] **Untyped atomics** (`atomic.StoreInt32(&flag, 1)`) → typed `atomic.Bool` / `atomic.Int64` /
+      `atomic.Pointer[T]` (Go 1.19+). The typed form makes the atomic-ness part of the type, so a
+      plain `flag = true` elsewhere stops compiling — the untyped form silently allows it
+- [ ] **`sync.Once` + wrapper closure** → `sync.OnceFunc` / `sync.OnceValue` (Go 1.21+), which also
+      removes the shared mutable variable the old pattern needs
+- [ ] **Cancellation that loses its reason**: `context.WithCancel` + `cancel()` tells a downstream
+      handler *that* it was cancelled, never *why*. Use `context.WithCancelCause(parent)` +
+      `cancel(err)` + `context.Cause(ctx)` (Go 1.20+), and `WithTimeoutCause` for deadlines.
+      **On a money path this is a real finding, not a nit** — "did it fail or was it cancelled, and
+      by what?" is exactly the question an in-doubt transaction has to answer
 - [ ] **`errgroup`**: `g.Wait()` is actually called and its error is checked; the
       group is created with `errgroup.WithContext` when siblings must cancel
 
@@ -1902,6 +1934,11 @@ Go beyond "tests exist" — verify tests are meaningful:
 - [ ] **No tautological assertions**: `assert.Equal(t, result, result)` or asserting the mock's return value
 - [ ] **Complete mocks**: mock objects mirror the full shape of the real object, not just the fields the author expected
 - [ ] **No weakened assertions**: existing assertions not removed or relaxed to make tests pass
+- [ ] **`t.Context()` for a test-scoped context** (Go 1.24+) instead of
+      `context.WithCancel(context.Background())` — it is cancelled when the test ends, so a
+      forgotten `cancel()` stops leaking into the next test
+- [ ] **`for b.Loop()` in benchmarks** (Go 1.24+) instead of `for i := 0; i < b.N; i++` — it also
+      keeps the timer honest across setup
 
 ```bash
 # Check if tests were weakened — removed assertions
@@ -1937,6 +1974,11 @@ Report as **NIT** — with two exceptions promoted to SHOULD-FIX:
 Check `go.mod` first: these fixers assume the module's Go version supports the
 target construct.
 
+**`go fix` is this skill's authority for every modernization it can perform.** Roughly half
+of the known modern-Go idioms are mechanical rewrites it already applies, so they are never
+hand-reported: run it, paste its diff, done. Check **21d** covers only the residue — the
+idioms no analyzer detects — and is likewise gated on the module's Go version.
+
 ---
 
 ## Design depth & duplication (Phase 3b — checks 19-21)
@@ -1952,7 +1994,7 @@ Three lenses, deliberately kept separate because the fix differs:
 |---|---|---|
 | 19 | Deep vs. shallow modules (Ousterhout) | Does this interface reduce what the caller must know — and does this decision live in one place? |
 | 20 | DRY (Hunt & Thomas) | Does this **fact** have one authoritative representation? |
-| 21 | Uber Go Style Guide | Is this idiomatic, safe Go at the function/struct level? |
+| 21 | Uber Go Style Guide + modern stdlib | Is this idiomatic, safe Go at the function/struct level — and current for the module's Go version? |
 
 **They are not a hierarchy and they do not substitute for each other.** A module can be
 deep and still copy a `sync.Mutex` by value (19 ✅ / 21 ❌). A module can have zero
@@ -2533,6 +2575,62 @@ grep -rnE "\b(len|cap|new|copy|min|max|close|delete|append|error|string|int|any)
 Anything in 21c that `gofmt`, `golangci-lint` or `go fix` already reports belongs to
 Phase 0, not here. Emit only the residue.
 
+#### 21d. Modern stdlib — read the module's Go version FIRST (NIT, batched)
+
+Agents write outdated Go for two reasons: features newer than their training cutoff, and
+frequency bias — there is simply more `for i := 0; i < n; i++` in the training data than
+`for i := range n`. This block is the counterweight.
+
+**Step one is not a grep, it is `go.mod`.** Every rule below is gated on a version, and
+flagging an API the module cannot compile is worse than missing it:
+
+```bash
+grep -m1 '^go ' go.mod          # e.g. "go 1.27.0" → everything below applies
+grep -m1 '^toolchain' go.mod    # a toolchain line can raise the effective version
+```
+
+**Never report a rule whose version is above the module's `go` directive.** If the module
+is on 1.22, `wg.Go` (1.25) and `errors.AsType` (1.26) are not findings — they are
+"Para el próximo commit", conditional on a version bump.
+
+**`go fix` is the authority for roughly half of these** — the `modernize` analyzer already
+rewrites `interface{}`→`any`, the 3-clause loop→`for i := range n`, `sort.Ints`→`slices.Sort`,
+the manual-search loop→`slices.Contains`, `min`/`max`, `slices.Clone`, `strings.Cut*`,
+`fmt.Appendf`, `omitzero`, `reflect.TypeFor`, and the now-redundant `item := item` loop copy.
+Phase 0 already runs it. **Do not hand-report what `go fix -diff` printed** — that is a
+duplicate finding, and the fix is mechanical. What follows is the residue no tool catches:
+
+| Instead of | Use | Since |
+|---|---|---|
+| loop building `index := -1` | `slices.Index` / `slices.IndexFunc` | 1.21 |
+| loop computing a max/min over a slice | `slices.Max` / `slices.Min` | 1.21 |
+| `i, j := 0, len(s)-1` swap loop | `slices.Reverse` | 1.21 |
+| `sort.Slice(s, func(i,j int) bool)` | `slices.SortFunc` + `cmp.Compare` (type-safe, no index math) | 1.21 |
+| `for k := range m { delete(m,k) }` | `clear(m)` | 1.21 |
+| loop copying a map | `maps.Clone` / `maps.Copy` | 1.21 |
+| loop deleting by predicate | `maps.DeleteFunc` | 1.21 |
+| loop filling a slice from a map | `slices.Collect(maps.Keys(m))`, or `slices.Sorted(...)` to sort in one step | 1.23 |
+| `if v == "" { v = fallback }` chains | `cmp.Or(v, fallback)` | 1.22 |
+| `time.Now().Sub(t)` · `d.Sub(time.Now())` | `time.Since(t)` · `time.Until(d)` | 1.0 / 1.8 |
+| `string([]byte(s))` to break sharing | `strings.Clone(s)` | 1.18 |
+| manual `*url.URL` copy | `base.Clone()` | 1.27 |
+| `github.com/google/uuid` | the stdlib `uuid` package — one dependency fewer | 1.27 |
+| package-level generic helper over one type | a generic **method** on that type | 1.27 |
+| `encoding/json` in **new** code | `encoding/json/v2` — leave existing code alone unless a migration is ticketed | 1.27 |
+
+**Two that are contract, not style** — these outrank the NIT batch:
+
+- **`omitzero` vs `omitempty` (1.24).** `omitempty` does **not** omit a zero `struct` or a
+  zero `time.Time`. A field that must disappear when empty needs `omitzero`; keep
+  `omitempty` for strings, slices and maps. Getting this wrong changes the JSON on the
+  wire, so on a legacy-parity endpoint it is a **SHOULD-FIX**, not a nit
+- **`for range strings.SplitSeq(s, ",")` (1.24)** over `strings.Split` when only iterating —
+  `Split` allocates the whole slice. Matters on a hot path, not on a two-item header
+
+**Out of scope on purpose:** `net/http`'s method-aware `ServeMux` patterns and
+`r.PathValue` (1.22). They are good Go and irrelevant here — check 1 requires go-bricks
+routing, so recommending raw `net/http` would contradict a BLOCKER. Do not report it.
+
 ---
 
 ### Phase 3b gate — applies to BOTH `review` and `scan` (MANDATORY)
@@ -2873,6 +2971,7 @@ pushes back on a naming or concurrency finding:
 - Andy Hunt & Dave Thomas, *The Pragmatic Programmer* (1999) — "every piece of knowledge must have a single, unambiguous, authoritative representation within a system" (check 20)
 - Sandi Metz, ["The Wrong Abstraction"](https://sandimetz.com/blog/2016/1/20/the-wrong-abstraction) — "duplication is far cheaper than the wrong abstraction" (check 20e, the guard that keeps check 20 from over-firing)
 - [Uber Go Style Guide](https://github.com/uber-go/guide/blob/master/style.md) — guidelines (correctness/safety), performance, style, patterns (check 21)
+- [JetBrains/go-modern-guidelines](https://github.com/JetBrains/go-modern-guidelines) — 54 version-tagged modern-Go idioms in `internal/guidelines/guidelines.json`, each with `since_version`, `impact`, and a before/after example (check 21d). **Consulted, not copied**: the ~25 flagged `modernizer: true` are exactly what `go fix` rewrites and stay owned by Phase 0; only the ~29 no analyzer catches are written into 21d. Their CLI resolves the applicable version from `go.mod` and returns only the relevant rules — the practice 21d adopts as its first step. Re-read it when Go ships a release; it is maintained
 - Robert C. Martin — SOLID. Used in this skill only as **vocabulary mapping** (check 20f), never as a checklist of its own: SRP ≈ 19a/19c, ISP ≈ 19b, DIP ≈ 19b. OCP and LSP rarely produce real findings in idiomatic Go — do not invent them
 - go-bricks `messaging` / `outbox` / `inbox` packages — `Declarations.Validate()`, `ConsumerDeclaration`, `EventIDFromHeaders`, `Inbox.ProcessOnce` (check 6b). Read them in `$(go env GOMODCACHE)/github.com/gaborage/go-bricks@<ver>/`
 - NKH1 `common:pr-review` — sizing, title, coverage floor, promotion gates (Phase 1)

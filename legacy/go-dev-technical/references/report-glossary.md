@@ -51,6 +51,7 @@ go-bricks type names and status glyphs are never translated.
 | DRY — cada hecho con una sola fuente de verdad | DRY — every fact has one source of truth | fila |
 | Guard de sobre-aplicación DRY evaluado | DRY over-application guard applied | fila |
 | Idioms de Go (Uber) | Go idioms (Uber) | fila |
+| Stdlib moderna para la versión del `go.mod` | Modern stdlib for the `go.mod` version | fila |
 | Versión go-bricks | go-bricks version | fila |
 | Oportunidades go-bricks | go-bricks opportunities | fila |
 | Scope contenido | Scope contained | fila |

@@ -161,6 +161,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | DRY — cada hecho con una sola fuente de verdad | ✅/❌/N/A | |
 | Guard de sobre-aplicación DRY evaluado | ✅/N/A | duplicación accidental tolerada a propósito |
 | Idioms de Go (Uber) | ✅/❌/⚠️ | |
+| Stdlib moderna para la versión del `go.mod` | ✅/❌/N/A | go {version} detectada |
 | **go-bricks discovery** | | |
 | Versión go-bricks | ⚠️/✅ | |
 | Oportunidades go-bricks | ✅/❌ | {N} encontradas |
