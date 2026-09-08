@@ -1409,7 +1409,7 @@ the mapping stays traceable instead of duplicated.
 | 4 | **Reuse the shared reader before writing a repository** (Rule 0 below). Extend the shared query and DTO when a column is missing | A parallel stack — Row, scanColumns, mapper, DTO, interface — all of it well-built and all of it duplicate | 8a |
 | 5 | **Use the shared module bootstrap.** Do not copy another module's `Init` block | Six identical error strings; the module that skips it loses telemetry silently | 20c |
 | 6 | **Bus contract names come from the counterpart, copy-pasted, never retyped.** Exchange, queue, routing key and `EventType` must match the other side character for character | Publishes fine, routes nowhere, no error anywhere. The most expensive defect this repo can ship | 6b |
-| 7 | **QueryBuilder, always.** `fmt.Sprintf` into SQL is a blocker, not a shortcut, even for a one-off admin query | Security finding on a merged branch | 1b |
+| 7 | **QueryBuilder, always — raw SQL only when the builder truly cannot express it.** `fmt.Sprintf` into SQL is a blocker, not a shortcut, even for a one-off admin query. `RawExpression` (`qb.Expr`/`MustExpr`) only splices inline in SELECT/GROUP BY/ORDER BY — in INSERT VALUES / UPDATE SET it is bound as a parameter instead, so the **only** legitimate raw-SQL holdouts are: an Oracle sequence/function in VALUES or SET (`SEQ.NEXTVAL`, `SYSDATE`), `NVL()`/`\|\|` (or any function) directly inside a SET target, and a correlated scalar subquery inside SET (no clean builder form outside a SELECT projection). Every other statement — a plain SELECT/INSERT/UPDATE with only bound values, even a `ROWNUM = 1` guard (`f.Raw("ROWNUM = 1")`) — goes through `qb.Select/Insert/Update`. Document each holdout inline with the specific construct forcing it, not a blanket "stays raw" comment over the whole file | Security finding on a merged branch, or a phase later needing to retrofit builder calls one query at a time | 1b, 4b |
 
 ### Design decisions taken once, at STEP 0 — not discovered in review
 
@@ -1773,4 +1773,5 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | Retype a bus exchange/queue/routing key | Copy-paste from the counterpart (review 6b) |
 | Hand-copy a sibling flow | Parameterize a descriptor (review 20a) |
 | `fmt.Sprintf` into SQL "just this once" | QueryBuilder — it is a blocker (review 1b) |
+| "this statement stays raw" as a blanket comment over a whole query file | Convert every query that has no NEXTVAL/SYSDATE/NVL/\|\|/correlated-subquery in VALUES or SET; document only the true holdouts, one by one |
 | Open the PR with a known blocker | Fail closed: fix it in the phase (self-review gate) |
