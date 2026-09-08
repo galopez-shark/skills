@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.4.0"
+  version: "4.5.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -992,7 +992,33 @@ a parallel data-access stack.
 `setCardPin` migration needing `SEQUENCE_NUMBER`/`CARD_PROGRAM` extends that shared query+DTO — it
 must not fork a parallel card reader.
 
-### 1. Prefer the typed query builder over raw SQL
+### 1. The query builder is the default — raw SQL is an exception you must justify
+
+**Not a preference, a default with a burden of proof.** Every query this skill writes goes
+through the go-bricks query builder unless the builder **provably cannot express it**, and
+"provably" means the empirical test in section 2, not an opinion.
+
+The severity is not ours to soften — `go-dev-technical` **check 1b** owns it and will apply
+it to the PR:
+
+| What you wrote | Review verdict |
+|---|---|
+| `fmt.Sprintf` / `Fprintf` / `+` concatenation / `strings.Replace` into SQL | **BLOCKER — injection vector.** No exceptions, not even for a one-off admin query |
+| Raw SQL `const` the builder *could* express | SHOULD-FIX — migrate it |
+| Raw SQL `const` the builder cannot express, **with a comment saying why** | ✅ Justified, and check 18b honors that justification instead of re-flagging it |
+| Raw SQL `const` the builder cannot express, **with no comment** | NIT — and the reviewer has to reconstruct your reasoning |
+
+**Two rules that follow, and they are the whole point of doing this at construction time:**
+
+1. **Raw does NOT mean interpolated.** A raw statement still binds every value as a
+   parameter — `:param` (Oracle) or `$N` (PostgreSQL). The escape hatch is from the
+   *builder*, never from parameterization. A raw query with a value pasted into the string
+   is the BLOCKER above, and being raw does not excuse it
+2. **Write the WHY comment now, in the same commit.** One line above the `const`, naming
+   which construct the builder cannot express (`SYSDATE` in `VALUES`, `WITH`, an optimizer
+   hint). It costs seconds while the reason is in your head, and it converts a review
+   finding into a justified exception. Reconstructing it later costs a review round trip
+
 
 - Model each table as a typed descriptor `Entity[T]{ Name, Columns }` and build queries with the
   go-bricks query builder (`qb.Select/Insert/Update/Delete`, `dbtypes.MustTable`, `qb.Filter()`,
@@ -1006,18 +1032,43 @@ must not fork a parallel card reader.
   UNqualified table names (relying on the connection's default schema), migrate writes the same way
   (drop the `SCHEMA.` prefix) so both paths target one name. Flag the change in the PR.
 
-### 2. When a query CANNOT use the builder (keep it raw)
+### 2. When a query CANNOT use the builder (keep it raw — parameterized, and documented)
 
-- The builder **parameterizes the value side** of `Set(...)` / `Values(...)`. A DB-side function placed
-  there becomes a broken bind, NOT inline SQL. So `CURRENT_TIMESTAMP` / `SYSDATE` / sequence
-  `NEXTVAL` / `NVL(...)` / `||` concatenation in INSERT VALUES or UPDATE SET **cannot** be expressed
-  — keep those statements raw. (`RawExpression`/`MustExpr` inline only in SELECT / ORDER BY / Filter
-  value positions, never in Set/Values.)
-- Also keep raw: multi-table joins with a manual positional scan, `WITH` / `UNION`, optimizer hints,
-  `ROWNUM` tricks (or express `ROWNUM`/limit via `Limit()` / a `Raw` filter when clean).
+- **`UPDATE SET` with a DB-side expression IS expressible — use `SetExpr`.** go-bricks exposes
+  `SetExpr(column string, expr RawExpression, args ...any)` precisely for this, and it carries bound
+  arguments: `SetExpr("lease_until", qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`.
+  For the value itself prefer the vendor-aware helpers `BuildCurrentTimestamp()` and
+  `BuildUUIDGeneration()` over a hardcoded `SYSDATE` / `CURRENT_TIMESTAMP`. Do **not** drop to raw
+  SQL for an UPDATE just because a column takes a function.
+- **`INSERT ... VALUES` with a DB-side function is the case to verify**, not assume: `Values(...)`
+  takes `any`, so a `RawExpression` may survive as an expression or may silently become a bind.
+  Confirm with `ToSQL()` (next bullet) before classifying it as raw-only.
+- **Joins, subqueries, grouping, paging and locking are all expressible** — `InnerJoinOn` /
+  `LeftJoinOn` / `RightJoinOn` / `CrossJoinOn` with `JoinFilter`, `Exists` / `NotExists` /
+  `InSubquery` / `SubqueryColumn`, `GroupBy` / `Having`, `Limit` / `Offset` / `Paginate` (which
+  replaces `ROWNUM` tricks), and `ForUpdate` / `ForUpdateNoWait`. Also `BuildUpsert`,
+  `Insert(...).Select(...)`, and `Prefix` / `Suffix` for `RETURNING` / `ON CONFLICT`. None of these
+  justifies raw SQL.
+- **The genuinely absent constructs — the accepted reasons to keep a `const` raw — are `UNION`,
+  `WITH` / CTE, and vendor optimizer hints** (verified against go-bricks v0.63.0). Stored
+  procedures are also absent, but they are banned outright by review check 1d: a proc is a separate
+  blocker, never a justification.
+- **Re-derive the list instead of trusting this one** — the builder grows every release:
+  ```bash
+  GB=$(ls -d "$(go env GOMODCACHE)"/github.com/gaborage/go-bricks@* | sort -V | tail -1)
+  grep -hE '^\s+[A-Z][A-Za-z0-9]*\(' $GB/database/types/*.go | grep -v '^\s*//' | sed 's/^\s*//' | sort -u
+  ```
 - **Verify empirically before classifying** a query as migratable: write a throwaway test that prints
   `ToSQL()` and confirm no value silently became a bind (e.g. a `RawExpression` struct as an arg).
   A paper audit of "migratable vs hard" is frequently wrong — the generated SQL is ground truth.
+- **The list above is the closed set of accepted reasons.** "The legacy Java had it as a string",
+  "it is faster to copy", "it is only one query" and "it is internal, not user input" are **not**
+  reasons — the last one especially: today's internal caller is tomorrow's endpoint parameter.
+  A construct not in that list and not demonstrated by `ToSQL()` means the builder can express it,
+  so use it.
+- **Every raw statement carries its one-line WHY**, and the phase's PR body repeats the list of raw
+  queries with their reason. That is what the reviewer reads instead of re-deriving it (review
+  check 18b), and what the rawQuery audit table of a future `scan` will consume.
 
 ### 3. Centralize the exec/error boilerplate — shared `Execute*` helpers
 

@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.13.0"
+  version: "2.14.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -558,6 +558,29 @@ All must return **0 matches** (except legitimate type assertions in tests).
 QueryBuilder with parameterized queries as the DEFAULT. Any escape from that path
 (Raw, Expr, raw const) requires justification and safe patterns.
 
+#### 1b.0 Enumerate every SQL-producing site — do not spot-check (MANDATORY)
+
+The greps below find *known shapes*. They do **not** prove absence: injection hides where
+the pattern does not match — a SQL keyword living in a different constant, a query assembled
+across two functions, a helper that takes a fragment. So the procedure is enumeration, then
+judgement:
+
+1. **List every site in the diff that produces SQL**, whatever its shape:
+   ```bash
+   # every SQL-bearing string, builder call, and exec in the changed files
+   grep -rnE "(SELECT|INSERT +INTO|UPDATE +[A-Za-z_]|DELETE +FROM|MERGE +INTO|WITH +[A-Za-z_]+ +AS)" <changed-files> --include='*.go' | grep -v _test.go
+   grep -rnE "\.(Raw|Expr|MustExpr|Select|Insert|Update|Delete)\(" <changed-files> --include='*.go' | grep -v _test.go
+   ```
+2. **Open each one and read it.** Where does every value in that statement come from?
+3. **Every site gets a row in the audit table** with an explicit verdict — including the
+   safe ones. A site you did not classify is a site you did not review.
+4. **Empty output is not a pass.** A repository phase with zero SQL hits means the scope was
+   wrong, not that the code is clean. Re-check `<changed-files>` before writing ✅.
+
+**The audit table is MANDATORY on `review`, not only on `scan`.** If the diff touches no
+SQL at all, the section says so explicitly (`N/A — el diff no toca SQL`) — that is different
+from omitting it, and the difference is exactly what tells the reader you looked.
+
 #### Tier 1 — BLOCKER (SQL injection risk)
 
 ```bash
@@ -579,6 +602,18 @@ For every `Raw()` / `Expr()` / `MustExpr()` hit, verify:
 2. Any dynamic values go through `args ...any` (placeholders) → SAFE
 3. A variable touches the SQL string itself (`fmt.Sprintf`, `+`, etc.) → **BLOCKER**
 
+**The rule underneath all three tiers:** raw SQL is an escape hatch from the *builder*,
+**never** from parameterization. A statement the builder genuinely cannot express is still
+fully bound — `:param` / `$N` / `sql.Named` — for every value. "It had to be raw" justifies
+the raw string; it never justifies an interpolated value.
+
+**Arguments that are NOT justifications**, and are rejected without further discussion:
+"the legacy source had it as a string", "it is only one query", "it is faster to copy",
+"the builder is awkward here", and above all **"it is internal, not user input"** — today's
+internal caller is tomorrow's endpoint parameter, and the fix costs more then. The accepted
+reasons are the closed set in the decision tree below; anything else means the builder can
+express it.
+
 **BAD (SQL injection vulnerable):**
 ```go
 // BLOCKER: fmt.Sprintf with user input in SQL
@@ -596,6 +631,55 @@ f.Raw("status = '" + status + "'")
 // BLOCKER: strings.Replace on SQL template
 query := strings.ReplaceAll(tmpl, "{{status}}", status)
 ```
+
+#### 1b.1 What the builder can actually express — derive it, don't guess
+
+Most "the builder can't do this" claims are wrong, and the argument is unwinnable from
+memory. **Derive the surface from the installed go-bricks and quote it.** One command:
+
+```bash
+GB=$(ls -d "$(go env GOMODCACHE)"/github.com/gaborage/go-bricks@* | sort -V | tail -1)
+grep -hE '^\s+[A-Z][A-Za-z0-9]*\(' $GB/database/types/*.go | grep -v '^\s*//' | sed 's/^\s*//' | sort -u
+```
+
+Inventory as of **v0.63.0** — treat it as a starting point and re-derive it, because the
+list grows with every release:
+
+| Construct | Builder API | So raw SQL is… |
+|---|---|---|
+| Any join | `InnerJoinOn` · `LeftJoinOn` · `RightJoinOn` · `CrossJoinOn` · `JoinOn` + `JoinFilter` (`EqColumn`, `GtColumn`, `NotEqColumn`, …) | **not justified** |
+| Subqueries | `Exists` · `NotExists` · `InSubquery` · `SubqueryColumn(sub, alias)` · `MustValidateSubquery` | **not justified** |
+| Aggregation | `GroupBy` · `Having` | **not justified** |
+| Paging, `ROWNUM` tricks | `Limit` · `Offset` · `Paginate(limit, offset)` | **not justified** |
+| Row locking | `ForUpdate` · `ForUpdateNoWait` | **not justified** |
+| Conditions | `Eq` `NotEq` `Gt` `Gte` `Lt` `Lte` `Between` `In` `NotIn` `Null` `NotNull` `Regex` `RegexI` `NotRegex` `NotRegexI` `And` `Or` `Not` `Raw` | **not justified** |
+| **DB-side expression in `UPDATE SET`** | **`SetExpr(col, qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`** — carries bound args | **not justified** |
+| Vendor timestamp / UUID | `BuildCurrentTimestamp()` · `BuildUUIDGeneration()` — vendor-aware, no hardcoded `SYSDATE` | **not justified** |
+| Upsert | `BuildUpsert(table, conflictCols, insertCols, updateCols)` | **not justified** |
+| `INSERT … SELECT` | `Insert(...).Select(selectBuilder)` | **not justified** |
+| `RETURNING`, `ON CONFLICT`, insert options | `Prefix(sql, args…)` · `Suffix(sql, args…)` · `Options(...)` | **not justified** |
+| Case-insensitive LIKE | `BuildCaseInsensitiveLike(col, value)` | **not justified** |
+| Struct-driven writes | `SetStruct` · `SetMap` · `Columns(structPtr)` · `AllFields` · `Col` / `Cols` | **not justified** |
+
+**Genuinely absent in v0.63.0** — these are the accepted reasons for a raw `const`:
+`UNION`, `WITH` / CTE, and vendor optimizer hints. (Stored procedures are absent too, and
+**check 1d bans them outright** — a proc is never a justification, it is a separate blocker.)
+
+**How to use this in a review.** When the author says the builder cannot express it:
+
+1. Find the construct in the table. If it is there → **SHOULD-FIX**, with the exact method
+   named in your finding. "Use `SetExpr` with `MustExpr`" is actionable; "use the builder"
+   is not
+2. If it is `UNION` / `WITH` / a hint → justified. Verify it is **parameterized** and
+   **commented**, then mark it ✅ in the audit table
+3. If you cannot tell, ask for the `ToSQL()` output rather than guessing. The generated SQL
+   is ground truth — and a `RawExpression` that silently became a bind parameter shows up
+   there and nowhere else
+
+**One caveat, stated honestly:** `Values(values ...any)` on the insert builder takes `any`,
+so whether a `RawExpression` survives as an expression or silently becomes a bind must be
+confirmed with `ToSQL()` for that specific case. `UPDATE SET` has the explicit `SetExpr`
+path and needs no such doubt.
 
 #### Tier 2 — SHOULD-FIX (unnecessary escape hatch)
 
@@ -694,7 +778,7 @@ Is the query expressible with QueryBuilder?
         └── NO → Builder probably CAN express it — try harder
 ```
 
-#### rawQuery audit table (for scan reports)
+#### rawQuery audit table (MANDATORY in both `review` and `scan` reports)
 
 When running `/go-dev-technical scan`, include a rawQuery audit table:
 
@@ -2973,6 +3057,7 @@ pushes back on a naming or concurrency finding:
 - [Uber Go Style Guide](https://github.com/uber-go/guide/blob/master/style.md) — guidelines (correctness/safety), performance, style, patterns (check 21)
 - [JetBrains/go-modern-guidelines](https://github.com/JetBrains/go-modern-guidelines) — 54 version-tagged modern-Go idioms in `internal/guidelines/guidelines.json`, each with `since_version`, `impact`, and a before/after example (check 21d). **Consulted, not copied**: the ~25 flagged `modernizer: true` are exactly what `go fix` rewrites and stay owned by Phase 0; only the ~29 no analyzer catches are written into 21d. Their CLI resolves the applicable version from `go.mod` and returns only the relevant rules — the practice 21d adopts as its first step. Re-read it when Go ships a release; it is maintained
 - Robert C. Martin — SOLID. Used in this skill only as **vocabulary mapping** (check 20f), never as a checklist of its own: SRP ≈ 19a/19c, ISP ≈ 19b, DIP ≈ 19b. OCP and LSP rarely produce real findings in idiomatic Go — do not invent them
+- go-bricks `database/types/interfaces.go` — the authoritative QueryBuilder surface (checks 1b.1, 4c). **Derive it, never quote from memory**: `grep -hE '^\s+[A-Z][A-Za-z0-9]*\(' $GB/database/types/*.go`. The inventory in 1b.1 is stamped v0.63.0 and grows every release
 - go-bricks `messaging` / `outbox` / `inbox` packages — `Declarations.Validate()`, `ConsumerDeclaration`, `EventIDFromHeaders`, `Inbox.ProcessOnce` (check 6b). Read them in `$(go env GOMODCACHE)/github.com/gaborage/go-bricks@<ver>/`
 - NKH1 `common:pr-review` — sizing, title, coverage floor, promotion gates (Phase 1)
 - `novo-legacy-migration-endpoint` (`/migrate`) — phase caps (≤400 líneas / ≤10 files), branch-per-phase from `main`, version bump per phase (scan Step 6)
