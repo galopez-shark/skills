@@ -653,7 +653,7 @@ list grows with every release:
 | Paging, `ROWNUM` tricks | `Limit` · `Offset` · `Paginate(limit, offset)` | **not justified** |
 | Row locking | `ForUpdate` · `ForUpdateNoWait` | **not justified** |
 | Conditions | `Eq` `NotEq` `Gt` `Gte` `Lt` `Lte` `Between` `In` `NotIn` `Null` `NotNull` `Regex` `RegexI` `NotRegex` `NotRegexI` `And` `Or` `Not` `Raw` | **not justified** |
-| **DB-side expression in `UPDATE SET`** | **`SetExpr(col, qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`** — carries bound args | **not justified** |
+| DB-side expression in `UPDATE SET` | `SetExpr(col, expr, args…)` **exists, but verify with `ToSQL()`** — a `RawExpression` splices inline in SELECT/GROUP BY/ORDER BY and is *bound* in `VALUES`/`SET`, so confirm before ruling either way | **verify, then decide** |
 | Vendor timestamp / UUID | `BuildCurrentTimestamp()` · `BuildUUIDGeneration()` — vendor-aware, no hardcoded `SYSDATE` | **not justified** |
 | Upsert | `BuildUpsert(table, conflictCols, insertCols, updateCols)` | **not justified** |
 | `INSERT … SELECT` | `Insert(...).Select(selectBuilder)` | **not justified** |
@@ -661,9 +661,20 @@ list grows with every release:
 | Case-insensitive LIKE | `BuildCaseInsensitiveLike(col, value)` | **not justified** |
 | Struct-driven writes | `SetStruct` · `SetMap` · `Columns(structPtr)` · `AllFields` · `Col` / `Cols` | **not justified** |
 
-**Genuinely absent in v0.63.0** — these are the accepted reasons for a raw `const`:
-`UNION`, `WITH` / CTE, and vendor optimizer hints. (Stored procedures are absent too, and
-**check 1d bans them outright** — a proc is never a justification, it is a separate blocker.)
+**Genuinely absent in v0.63.0** — the closed set of accepted reasons for a raw `const`:
+
+- `UNION`, `WITH` / CTE, and vendor optimizer hints
+- A DB-side **function or sequence in `INSERT VALUES` / `UPDATE SET`** (`SEQ.NEXTVAL`,
+  `SYSDATE`, `NVL()`, `||`), and a **correlated scalar subquery inside `SET`** — because a
+  `RawExpression` splices inline only in SELECT / GROUP BY / ORDER BY and is *bound* as a
+  parameter in the value positions, turning a function there into a broken bind
+- Stored procedures are absent too, but **check 1d bans them outright** — a proc is never a
+  justification, it is a separate blocker
+
+Everything else goes through the builder, **including a `ROWNUM = 1` guard**
+(`f.Raw("ROWNUM = 1")` inside an otherwise-built query, or `Limit`/`Paginate`). And a
+blanket "this file stays raw" comment over a whole query file is not documentation: each
+holdout is documented individually with the specific construct forcing it.
 
 **How to use this in a review.** When the author says the builder cannot express it:
 

@@ -1034,15 +1034,20 @@ it to the PR:
 
 ### 2. When a query CANNOT use the builder (keep it raw — parameterized, and documented)
 
-- **`UPDATE SET` with a DB-side expression IS expressible — use `SetExpr`.** go-bricks exposes
-  `SetExpr(column string, expr RawExpression, args ...any)` precisely for this, and it carries bound
-  arguments: `SetExpr("lease_until", qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`.
-  For the value itself prefer the vendor-aware helpers `BuildCurrentTimestamp()` and
-  `BuildUUIDGeneration()` over a hardcoded `SYSDATE` / `CURRENT_TIMESTAMP`. Do **not** drop to raw
-  SQL for an UPDATE just because a column takes a function.
-- **`INSERT ... VALUES` with a DB-side function is the case to verify**, not assume: `Values(...)`
-  takes `any`, so a `RawExpression` may survive as an expression or may silently become a bind.
-  Confirm with `ToSQL()` (next bullet) before classifying it as raw-only.
+- **`RawExpression` splices inline only in SELECT / GROUP BY / ORDER BY.** In `INSERT VALUES` and
+  `UPDATE SET` it is bound as a parameter instead, which is why a DB-side function placed there
+  becomes a broken bind rather than inline SQL. That is what makes the holdout list in rule 7 above
+  a **closed** list: an Oracle sequence or function in `VALUES`/`SET` (`SEQ.NEXTVAL`, `SYSDATE`),
+  `NVL()` / `||` (or any function) directly inside a `SET` target, and a correlated scalar subquery
+  inside `SET`.
+- **Before writing one of those off as raw, check `SetExpr` for the `UPDATE SET` case.** go-bricks
+  declares `SetExpr(column string, expr RawExpression, args ...any)` on the update builder, and its
+  own doc shows it carrying bound arguments —
+  `SetExpr("lease_until", qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`. Whether that
+  actually splices the expression or binds it **must be confirmed with `ToSQL()` for your vendor**;
+  do not assume either way. If it splices, that statement leaves the holdout list. Likewise prefer
+  the vendor-aware `BuildCurrentTimestamp()` / `BuildUUIDGeneration()` over a hardcoded `SYSDATE`
+  wherever the value — not the expression — is what you need.
 - **Joins, subqueries, grouping, paging and locking are all expressible** — `InnerJoinOn` /
   `LeftJoinOn` / `RightJoinOn` / `CrossJoinOn` with `JoinFilter`, `Exists` / `NotExists` /
   `InSubquery` / `SubqueryColumn`, `GroupBy` / `Having`, `Limit` / `Offset` / `Paginate` (which
