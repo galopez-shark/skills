@@ -1,10 +1,10 @@
 ---
 name: novo-legacy-migration-endpoint
-description: "Migrates a single legacy endpoint to Go using the context from novo-legacy-migration-context. Supports subcommands: /migrate list (all endpoints + status), /migrate status <name> (phase detail), /migrate roadmap (full migration roadmap with priorities). Uses go-bricks as the mandatory architectural foundation. Encodes 50+ battle-tested rules from real production migrations, and builds to the go-dev-technical review standard so generated code passes review on the first pass: a self-review gate closes every phase, and the seven decisions that are cheap at construction time (response funnel, no parallel code/message lists, adapter-owned transport, shared-reader reuse, shared bootstrap, copied bus contract names, QueryBuilder always) are taken before the first line is written."
+description: "Migrates a single legacy endpoint to Go using the context from novo-legacy-migration-context. Supports subcommands: /migrate list (all endpoints + status), /migrate status <name> (phase detail), /migrate roadmap (full migration roadmap with priorities). Uses go-bricks as the mandatory architectural foundation. Encodes 50+ battle-tested rules from real production migrations, and builds to the go-dev-technical review standard so generated code passes review on the first pass: a self-review gate closes every phase, and the seven decisions that are cheap at construction time (response funnel, no parallel code/message lists, adapter-owned transport, shared-reader reuse, shared bootstrap, copied bus contract names, QueryBuilder always) are taken before the first line is written. Phases are STACKED by default with gh-stack — phase N+1 branches off phase N without waiting for its merge, so the whole stack reviews in parallel — falling back to serial for phases gated on TEST certification, unverified money-path parity, a design that depends on the previous review, or a merge queue."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.6.0"
+  version: "4.7.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -41,7 +41,8 @@ migrate — migrate ONE legacy endpoint to Go (go-bricks), phase by phase.
 
 SUBCOMMANDS
   /migrate <endpoint>          Migrate an endpoint (default). Reads Java, plans phases, executes
-                               domain → repository → service → handler → docs, one branch per phase.
+                               domain → repository → service → handler → docs, one branch per phase,
+                               apiladas con gh-stack por defecto (sin esperar merges).
   /migrate list                Table of every endpoint + migration status.
   /migrate roadmap             Recommended wave order + effort estimates.
   /migrate status <endpoint>   Phase-level detail for one endpoint.
@@ -62,7 +63,16 @@ SUBCOMMANDS
 REQUIRES  .migration-context.yaml — run /migration-context first to create it.
 
 KEY RULES
-  • Every phase branches from main; ≤400 new lines / ≤10 files per phase; bump version each phase.
+  • FASES APILADAS por defecto (gh-stack): la fase N+1 arranca sobre la rama de la N sin esperar
+    el merge, y todas se revisan en paralelo. Serial sólo cuando toca: fase que necesita
+    certificación en TEST, fase de dinero con paridad sin verificar, fase cuyo diseño depende
+    del review de la anterior, o repo con merge queue. El modo se propone en el roadmap (STEP 1).
+    Requiere `gh extension install github/gh-stack` (gh ≥ 2.90.0); si no está, avisa y va serial.
+  • gh stack sync después de CADA merge y de cada cambio de review en un PR de abajo — si no,
+    el diff que ve el reviewer está mal. El merge es todo-o-nada hasta el PR elegido.
+  • Una fase apilada es `en review` (con su base: PR #124 → #123), NO `merged`, hasta que el
+    stack aterrice.
+  • ≤400 new lines / ≤10 files per phase; bump version each phase. Apilar NO relaja estos caps.
   • go-bricks is mandatory. Canonical reference: github.com/novopayment/mdw-welcome-project-go.
   • If run from the legacy repo, ask for the Go target repo (git) before doing anything.
   • Parity: error codes/messages/flows must match Java (flag bugs, don't replicate).
@@ -173,6 +183,23 @@ Show phase-level detail for a specific endpoint. Accept endpoint by name, number
 - Ask if the user wants to start the migration
 
 **Update `.migration-context.yaml`** after showing status if any phase changed.
+
+**In stacked mode the status box changes two things** (the example above is the serial
+shape): each submitted phase carries its PR and base, and `pending` says what it really
+waits for — the previous phase *submitted*, not merged:
+
+```
+│ Phase 2 — Repository                                             │
+│   Branch: feature/CEB-5650-repository                            │
+│   Status: 🔄 en review — PR #124 → #123                          │
+│                                                                  │
+│ Phase 3 — Handler                                                │
+│   Status: ⏳ pending (sobre #124, arranca sin esperar su merge)  │
+```
+
+Run `gh stack view` before printing the box and reconcile it with the file — the stack on
+disk is the authority, `.migration-context.yaml` is the convenience. If they disagree, say
+so instead of printing the file's version.
 
 ---
 
@@ -1192,38 +1219,65 @@ Rules for that proposal:
 
 Adjust the number of phases based on the estimate:
 
+**The roadmap MUST show the PR chain**, not just the phase list — in stacked mode the base of
+each PR is the plan's most important fact, and it is what the user is approving. Mark every
+phase with its mode and what it actually waits for:
+
 ```
 Migration roadmap for: {endpoint_name}
+Modo: STACK fases 1-3 · SERIAL fase 4 (cert TEST) y 5     ← propuesta, requiere tu OK
 
-Phase 1 — Domain
-  Branch: {branch_prefix}{ticket}-domain
-  Delivers: DTOs, entities
-  Est: ~X files, ~Y lines
-  Status: [ ] pending
+  main
+   └─ Fase 1 — Domain                    PR → main
+      Branch:  {branch_prefix}{ticket}-domain
+      Delivers: DTOs, entities
+      Est:     ~X archivos, ~Y líneas
+      Espera:  nada — arranca ya
 
-Phase 2 — Repository
-  Branch: {branch_prefix}{ticket}-repository
-  Delivers: SQL queries, repository impl + tests
-  Est: ~X files, ~Y lines
-  Status: [ ] pending (blocked by Phase 1 merge)
+      └─ Fase 2 — Repository             PR → PR de fase 1
+         Branch:  {branch_prefix}{ticket}-repository
+         Delivers: SQL queries, repository impl + tests
+         Est:     ~X archivos, ~Y líneas
+         Espera:  que la fase 1 esté submitteada (NO su merge)
 
-Phase 3 — Service
-  Branch: {branch_prefix}{ticket}-service
-  Delivers: Business logic, error mapping + tests
-  Est: ~X files, ~Y lines
-  Status: [ ] pending (blocked by Phase 2 merge)
+         └─ Fase 3 — Service             PR → PR de fase 2
+            Branch:  {branch_prefix}{ticket}-service
+            Delivers: Business logic, error mapping + tests
+            Est:     ~X archivos, ~Y líneas
+            Espera:  que la fase 2 esté submitteada (NO su merge)
 
-Phase 4 — Handler
-  Branch: {branch_prefix}{ticket}-handler
-  Delivers: HTTP binding, route registration + tests
-  Est: ~X files, ~Y lines
-  Status: [ ] pending (blocked by Phase 3 merge)
+  ── corte del stack ──  fase 4 arranca desde main, ya mergeado el stack
 
-Phase 5 — Docs (after TEST certification)
-  Branch: {branch_prefix}{ticket}-docs
-  Delivers: Flow docs, PlantUML, OpenAPI updates
-  Status: [ ] pending (blocked by Phase 4 merge + TEST cert)
+  Fase 4 — Handler / ruta                PR → main          [SERIAL]
+      Branch:  {branch_prefix}{ticket}-handler
+      Delivers: HTTP binding, route registration, Postman + tests
+      Espera:  merge del stack 1-3.  Serial porque habilita la ruta y
+               necesita certificación en TEST antes de la fase 5
+
+  Fase 5 — Docs                          PR → main          [SERIAL]
+      Branch:  {branch_prefix}{ticket}-docs
+      Delivers: Flow docs, PlantUML, OpenAPI
+      Espera:  certificación en TEST de la fase 4
+
+Se ahorran 2 esperas de merge (fases 2 y 3 no bloquean).
+Comandos del stack: gh stack init -b main → add ×2 → push → submit --open
 ```
+
+Three things that template gets right and a plain phase list does not:
+
+- **Every phase says what it waits for**, and in stacked mode that is *submitted*, not
+  *merged*. "Blocked by Phase N merge" is the serial assumption — never print it for a
+  stacked phase
+- **The cut between stacked and serial is drawn explicitly**, with the reason on the first
+  serial phase. A mode without a stated reason is one nobody can challenge
+- **The saving is stated in merge waits removed**, a number you can back — not a percentage
+
+PR numbers do not exist until `gh stack submit` runs, so the roadmap shows the **chain**
+(`PR → PR de fase N`). Replace those with real numbers (`PR #124 → #123`) in the progress
+display once submitted, and keep `gh stack view` as the source of truth.
+
+If the user accepts an all-serial plan, drop the tree and print the flat list with
+`Espera: merge de la fase N` on each.
 
 For a simple endpoint (few DTOs, one query, no external calls), phases can be combined:
 
