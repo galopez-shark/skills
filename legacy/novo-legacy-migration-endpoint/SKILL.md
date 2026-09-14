@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.5.0"
+  version: "4.6.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -404,7 +404,8 @@ Accept the endpoint by name, number, or Java method name.
 
 After a `verify-parity` run, plan the fixes for the **cases the user chooses** to bring to parity.
 The `<ids>` are the row numbers from the verify-parity matrix (e.g. `cases (9,10,11)`). Produces a
-**phased roadmap** (one branch per phase, always from `main`) under a **STRICTER limit than the
+**phased roadmap** (one branch per phase — from `main` in serial mode, from the previous
+phase's branch when stacked) under a **STRICTER limit than the
 default**: **max 300 new lines and max 10 files per phase** (parity fixes must be small and surgical;
 split into more phases when needed).
 
@@ -1166,6 +1167,27 @@ If ANY layer exceeds 400 lines or 10 files → split it. Common splits:
 
 **The number of phases is NOT fixed at 4.** It can be 3 (simple endpoint) or 7+ (complex endpoint with external calls, transactions, multiple tables). The phases depend entirely on the size estimate.
 
+### Propose the sequencing mode with the roadmap (MANDATORY)
+
+The roadmap is where the mode is decided, because it is the only point where the whole phase
+list is visible. Present it as a recommendation with its reason, per phase, and get a yes:
+
+> Son 5 fases. Propongo **stack** para 1-3 (domain → repository → service): se revisan en
+> paralelo y no esperamos merges. La fase 4 (ruta) va **serial** porque necesita certificación
+> en TEST antes de que exista la fase 5. ¿Lo hago así?
+
+Rules for that proposal:
+
+- **Default to stacked** when the prerequisites are met and no phase hits the "When NOT to
+  stack" list. Say the expected saving in plain terms — N merge waits removed — not a
+  percentage you cannot back
+- **Name the serial phases and why**, one clause each. A mode chosen without a stated reason
+  is a mode nobody can challenge
+- **Never switch a running migration** from serial to stacked mid-flight. Finish the open
+  phase, then propose the mode for what remains
+- If the prerequisites fail (`gh` < 2.90.0, extension unavailable), **say so and run serial**
+  rather than proposing something the user cannot execute
+
 ### Present numbered checklist
 
 Adjust the number of phases based on the estimate:
@@ -1245,7 +1267,7 @@ ticket: "CEB-XXXX"
 
 ## STEP 2 — Execute Phase by Phase (SEQUENTIAL)
 
-### CRITICAL: One phase at a time, always from main
+### CRITICAL: one concern per phase — and never move on without a signal
 
 ```
 Phase 1 → PR → merge to main → user confirms ✓
@@ -1257,13 +1279,126 @@ Phase 2 → PR → merge to main → user confirms ✓
 Phase N (docs) → PR → merge to main → done ✓
 ```
 
-The number of phases varies per endpoint (3 to 7+). The rule is the same regardless:
+The number of phases varies per endpoint (3 to 7+). Two things never change:
 
-**NEVER start the next phase until the user explicitly confirms the previous one is merged to main.**
+1. **One concern per phase**, within the ≤400 prod lines / ≤10 files caps.
+2. **Never start the next phase on your own initiative.** The signal you wait for depends on
+   the mode chosen at STEP 1 — see "Phase sequencing" below:
+   - **Serial** — the signal is the user confirming the previous phase **merged to main**.
+     The diagram above is this mode
+   - **Stacked** — the signal is the previous phase's PR being **submitted** (`gh stack
+     submit`) and the user agreeing to continue. The phase is still open in review; you build
+     on its branch, not on `main`
+
+**In neither mode do you start a phase because the previous one "looks finished".** What is
+forbidden is inventing the signal, not the waiting itself — and stacking exists precisely so
+the waiting stops being the bottleneck.
+
+### Phase sequencing — stacked by default, serial when it must be
+
+The cost of this skill's phase discipline was never the phase size, it was the **waiting**:
+a phase could not start until the previous one merged. Stacked PRs remove that wait without
+relaxing a single gate — each PR still holds one concern, still caps at ≤400 prod lines and
+≤10 files, still bumps its version, still passes its self-review gate.
+
+**Stacked (default).** Phase N+1 branches off phase N's branch and its PR targets that
+branch, so GitHub shows only the incremental diff. Reviews run in parallel; the stack lands
+in one operation when approved:
+
+```
+main ──┬── feature/CEB-XXXX-domain      PR #1 → main        ┐
+       └──┬─ feature/CEB-XXXX-repository PR #2 → PR #1      │ all three in review
+          └── feature/CEB-XXXX-service   PR #3 → PR #2      ┘ at the same time
+```
+
+**Serial (the old flow).** Phase N+1 starts from `main` only after phase N merges. Still the
+right mode in the cases listed under "When NOT to stack" below.
+
+#### Prerequisites — verify once, before proposing the stacked mode
+
+```bash
+gh --version            # needs >= 2.90.0
+git --version           # needs >= 2.20
+gh extension install github/gh-stack
+gh extension list | grep stack
+```
+
+If `gh` is older or the extension is unavailable (offline, restricted runner), **say so and
+run serial** — never half-stack by hand-setting base branches, which produces a stack GitHub
+tracks but `gh stack` does not.
+
+#### Commands mapped to the phase workflow
+
+| Moment in the phase | Serial | Stacked |
+|---|---|---|
+| First phase of the endpoint | `git checkout main && git pull`, `git checkout -b feature/{ticket}-{phase}` | `gh stack init -b main`, then rename/create the first branch with the same NKH1 name |
+| Start a later phase | wait for merge, then branch from `main` | `gh stack add feature/{ticket}-{phase}` — **no waiting** |
+| Commit + branch in one step | — | `gh stack add -Am "type: subject"` |
+| Publish the phase | `git push -u origin <branch>` | `gh stack push` |
+| Open / update the PRs | `gh pr create` | `gh stack submit` (add `--open` to mark ready for review) |
+| See where you are | `git log --oneline` | `gh stack view` |
+| Trunk moved, or a lower PR took review changes | `git rebase main` | `gh stack sync` — fetches, fast-forwards trunk, cascades the rebase, pushes, and re-syncs the PRs |
+| Conflict during that rebase | resolve, `git rebase --continue` | resolve, `git add`, `gh stack rebase --continue` (or `--abort` to restore every branch) |
+| Land it | merge PR, confirm, next phase | `gh stack merge --merge-method squash` |
+
+Branch names do **not** change: the NKH1 convention (`feature/CEB-XXXX-service`, from the
+`### Branching` rules) applies identically. Stacking changes each PR's *base*, not its name.
+
+#### The four rules that make a stack safe
+
+1. **`gh stack sync` after every merge and after every review change to a lower PR.** A stack
+   whose parent moved is stale, and the diff GitHub shows a reviewer is then wrong. This is
+   the one habit the whole mode depends on.
+2. **Merging is all-or-nothing up to the PR you pick.** `gh stack merge` lands every PR from
+   the trunk up to your choice in a single operation — if any one of them cannot merge, none
+   do. So merge *up to the last approved phase*, never "the top one" out of habit.
+3. **Review order still runs bottom-up.** A reviewer approving phase 3 is implicitly trusting
+   phases 1 and 2. If phase 1 changes after phase 3 was approved, phase 3's approval is stale —
+   `gh stack sync` and say so in the PR.
+4. **One concern per PR, unchanged.** Stacking makes the ≤400-line cap *easier* to honor, not
+   optional. A stack of three oversized PRs is three review problems, not one solved.
+
+#### When NOT to stack — run serial instead
+
+- **The phase must be certified in a real environment before the next one is written.** Any
+  phase gated on a TEST/UAT result (typically the route-enabling phase and anything the
+  migration context marks as requiring certification) — the next phase's design depends on an
+  answer that does not exist yet
+- **A money-touching phase whose parity is still unverified.** If the branch decides whether
+  funds moved, reversed, or are in doubt, the parity check against the legacy source has to
+  land before anything is built on top. Building three phases on an unverified money branch
+  means a parity fix cascades a rebase through all of them
+- **The next phase's design genuinely depends on the previous phase's review.** If you expect
+  the reviewer to change the shape of phase N (an interface, a Row struct, an error contract),
+  stacking on it buys speed and pays it back with interest in cascaded rework
+- **The repository uses a merge queue for this target.** The stack enters the queue rather
+  than merging directly and may land in separate groups — workable, but confirm the ordering
+  with whoever owns the queue before relying on it
+
+#### Bookkeeping that changes
+
+- **`.migration-context.yaml`**: `current_branch` is the branch you are *on*; add the stack's
+  branch order so a resumed session can reconstruct it (`gh stack view` is the source of
+  truth — the file is a convenience, not an authority)
+- **Version bumps**: each phase still bumps `app.version` in `config.yml`. Sequential bumps
+  inside one stack do not conflict, but **if a lower phase changes its bump after review,
+  every phase above it conflicts on that same line** — expect it, resolve it once, and
+  `gh stack sync`
+- **Roadmap progress**: a phase is "in review", not "done", until the stack actually merges.
+  Report both — `Fase 2 — Repository [PR #124, en review, sobre #123]` — so the user is never
+  told a phase landed when it is only stacked
+
+#### What to ask the user, and when
+
+At **STEP 1** (phase roadmap), propose the mode explicitly with the reason, and let the user
+choose: *"Son 5 fases; propongo stack (fases 1-3) + serial para la fase de ruta, que necesita
+certificación en TEST. ¿Lo hago así?"* Do not silently switch a migration already running in
+serial mode to stacked — finish the current phase, then propose it for the remainder.
 
 ### Phase START sequence (EVERY phase)
 
-1. **Confirm merge**: "Is Phase N merged to main?"
+1. **Confirm the signal for the active mode** — serial: *"¿La fase N ya está en main?"*;
+   stacked: *"La fase N quedó en PR #X; ¿arranco la N+1 sobre esa rama?"*
 2. **Resolve the Jira ticket** — if the work's ticket is not known, ASK the user for the ticket or
    epic. **If the user gives an EPIC (not a specific ticket), search Jira under that epic for the
    child ticket whose summary matches this endpoint** (by its `java_method`/name), present the best
@@ -1277,9 +1412,14 @@ The number of phases varies per endpoint (3 to 7+). The rule is the same regardl
      --data-urlencode "jql=parent={EPIC} AND summary ~ \"{endpoint_or_java_method}\"" \
      -H "Authorization: Basic ${AUTH}"
    ```
-3. `git checkout main && git pull` — **every branch ALWAYS starts from `main`** (stash/commit dirty tree first)
+3. **Position the base** (stash/commit a dirty tree first):
+   - serial → `git checkout main && git pull` — the branch starts from `main`
+   - stacked → stay on the previous phase's branch; `gh stack sync` first if trunk moved or the
+     lower PR took review changes
 4. Verify go-bricks version — if outdated, update branch FIRST
-5. **Create the branch:** `git checkout -b {branch_prefix}{ticket}-{phase}` — **from main** (do create it, don't skip)
+5. **Create the branch** (do create it, don't skip) — same NKH1 name in both modes:
+   - serial → `git checkout -b {branch_prefix}{ticket}-{phase}` from `main`
+   - stacked → `gh stack add {branch_prefix}{ticket}-{phase}` on top of the previous phase
 6. Explore existing modules for reusable code
 7. **Check go-bricks** for any new helpers relevant to this phase
 8. Announce what this phase implements — get confirmation
@@ -1405,11 +1545,29 @@ Before writing the first line of code in any phase, validate ALL applicable item
    unknown (repo file vs Postman cloud via the Postman MCP). Skip for domain/repository/
    service/docs phases — only the phase that enables the route touches the collection.
 9. Present PR text with ticket link
-10. **Update roadmap** — mark phase done, show next status
-11. **Update `.migration-context.yaml`** — update `current_phase` and `current_branch`
-12. **WAIT for approval** before committing
+10. **Publish the phase** for the active mode:
+    - serial → push the branch and open the PR as usual
+    - stacked → `gh stack push` then `gh stack submit --open`, and report the PR **with its
+      base**: `PR #124 → #123`. Run `gh stack view` and paste it so the user sees the shape
+11. **Update roadmap** — mark the phase `merged` (serial) or `en review` (stacked). A stacked
+    phase is **not** done until the stack merges; never report it as landed
+12. **Update `.migration-context.yaml`** — `current_phase`, `current_branch`, and in stacked
+    mode the branch order of the stack
+13. **WAIT for approval** before committing
 
 ### Between phases — show progress (adapt to actual phase count)
+
+In **stacked** mode the same list carries the PR and its base, and distinguishes
+`en review` from `merged` — a stacked phase that is only submitted has not landed:
+
+```
+Fase 1 — Domain        [PR #123 → main]  en review
+Fase 2 — Repository    [PR #124 → #123]  en review
+Fase 3 — Service       [PR #125 → #124]  ← acá vamos
+Fase 4 — Handler/ruta  serial, espera certificación en TEST
+```
+
+In **serial** mode:
 
 ```
 Phase 1 — Domain                   [x] merged
@@ -1733,7 +1891,8 @@ This skill's phase flow implements NovoPayment's **SDLC Developer Quick Referenc
 org-wide rules in sync with the per-phase steps above.
 
 ### Branching
-`[tipo]/[JIRA-ID]-[desc-kebab]`, **always from `main`**. Types: `feature/` (nueva funcionalidad),
+`[tipo]/[JIRA-ID]-[desc-kebab]`, branched from `main` (serial) or from the previous phase's
+branch (stacked — the name is identical either way, only the base differs). Types: `feature/` (nueva funcionalidad),
 `fix/` (bug), `hotfix/` (urgente en prod). Lowercase + kebab-case, description 3–5 words, JIRA-ID
 mandatory. This repo's migration phases append the phase to the desc (`feature/CEB-XXXX-service`).
 - ❌ `feature/login` · `gabriel/fix-bug` (no name prefix) · `Feature/PAY-456-Login` (caps) ·
@@ -1831,3 +1990,9 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | `fmt.Sprintf` into SQL "just this once" | QueryBuilder — it is a blocker (review 1b) |
 | "this statement stays raw" as a blanket comment over a whole query file | Convert every query that has no NEXTVAL/SYSDATE/NVL/\|\|/correlated-subquery in VALUES or SET; document only the true holdouts, one by one |
 | Open the PR with a known blocker | Fail closed: fix it in the phase (self-review gate) |
+| Start the next phase because the previous "looks done" | Wait for the mode's signal: merge (serial) or submitted PR + user go-ahead (stacked) |
+| Report a stacked phase as `merged` when it is only submitted | `en review` until the stack actually lands |
+| Build a stack on an unverified money-path branch | Verify parity first — a later fix cascades a rebase through every phase above it |
+| Hand-set a PR's base branch to fake a stack | `gh stack add` / `submit`, or run serial. A hand-made stack is one `gh stack` cannot sync |
+| Let a lower PR take review changes without re-syncing | `gh stack sync` — otherwise every diff above it is wrong |
+| `gh stack merge` on the top PR out of habit | Merge up to the **last approved** phase; it is all-or-nothing |
