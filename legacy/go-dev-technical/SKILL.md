@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.14.0"
+  version: "2.15.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -218,11 +218,33 @@ git fetch origin refs/pull/<PR_NUMBER>/head:pr-<PR_NUMBER> --force
 # Now pr-<PR_NUMBER> is a local ref pointing to the exact PR HEAD
 ```
 
-**Step 2 — Get the diff against the base branch**:
+**Step 2 — Resolve the PR's REAL base, then diff against it** (MANDATORY):
+
+A PR does not necessarily target `main`. In a **stacked PR** — phase N+1 of a migration
+targeting phase N's branch — diffing against `main` is wrong twice over: it inflates the size
+count with the parent phases' lines, and it makes you **report the parent PRs' code as
+findings of this one**, re-reviewing work the author did not write here. Resolve the base:
+
 ```bash
-git diff origin/main...pr-<PR_NUMBER> --stat
-git diff origin/main...pr-<PR_NUMBER>
+# The PR's declared base — never assume main
+BASE=$(gh pr view <PR_NUMBER> --json baseRefName -q .baseRefName 2>/dev/null)
+BASE=${BASE:-main}
+git fetch origin "$BASE" --force
+echo "base real del PR: $BASE"
+
+git diff "origin/$BASE"...pr-<PR_NUMBER> --stat
+git diff "origin/$BASE"...pr-<PR_NUMBER>
 ```
+
+**Throughout this skill, every `origin/main...pr-<N>` means `origin/$BASE...pr-<N>`.** The
+literal `origin/main` is written for the common case; substitute the resolved base whenever
+it differs, in the sizing gate, the evidence sweep, and every check's grep.
+
+**When the base is another PR's branch, say so in the report header** — "PR #125 → #124
+(stack)" — and review **only this PR's increment**. A finding that belongs to the parent PR
+goes to the parent's review, not this one; mention it in one line if it is a blocker the
+stack would carry, and note that merging is all-or-nothing up to the chosen PR, so a blocker
+anywhere below blocks this one from landing too.
 
 **Step 3 — Read full files from the PR branch** (for context):
 ```bash

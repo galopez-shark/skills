@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.7.0"
+  version: "4.8.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -1151,10 +1151,18 @@ Every repo repeats the same `getDB → Query → rows.Next/Scan/rows.Err → wra
 
 ### Phase limits (HARD RULES — ENFORCED AT ALL TIMES)
 
-- Max **400 new lines** and **10 files** per phase (implementation + tests combined)
-- **Every phase branches from `main`** — NEVER from another feature branch
+- Max **400 new lines** and **10 files** per phase (implementation + tests combined) —
+  **measured against the branch's base**, not against `main` (see the Phase END line count)
+- **One branch per phase, one phase per PR.** The base is `main` in serial mode and the
+  previous phase's branch when stacked — what is forbidden is *two concerns in one branch*,
+  not branching off a phase
 - Each phase bumps version in the versioning file
 - If a phase exceeds limits → **split it into more phases**
+
+**Stacking does not raise the cap — it makes it cheaper to respect.** The whole point is that
+a 1200-line change becomes three 400-line PRs reviewed in parallel instead of one unreviewable
+PR or three serialized waits. A stack of oversized PRs is three review problems, not one
+solved.
 
 **These limits are enforced DURING implementation, not just during planning.** If while writing code you realize the current phase will exceed 400 lines or 10 files:
 
@@ -1166,7 +1174,8 @@ Every repo repeats the same `getDB → Query → rows.Next/Scan/rows.Err → wra
    > - Fase {N}b: {what moves to a new branch} (~{Y} líneas)
 4. **Finish only what fits** in the current branch (≤ 400 lines)
 5. **Run `make check`** and present the PR for what you have
-6. **The rest goes in the next branch** — after this one merges to main
+6. **The rest goes in the next branch** — after this one merges (serial), or stacked directly
+   on top of it with `gh stack add` (stacked, no wait)
 
 **Monitor during implementation:**
 - After writing each file, do a quick line count check
@@ -1537,13 +1546,22 @@ Before writing the first line of code in any phase, validate ALL applicable item
 
 ### Phase END sequence (EVERY phase)
 
-1. **LINE COUNT CHECK** — verify the phase stays within limits:
+1. **LINE COUNT CHECK** — verify the phase stays within limits. **Measure against this
+   branch's BASE, never against `main`.** In a stack, phase 3's diff against `main` also
+   contains phases 1 and 2, so measuring from `main` would fail a phase that is perfectly
+   sized — the cap is per branch, i.e. per PR, i.e. per unit of review:
    ```bash
-   # Count new/modified lines (implementation + tests)
-   git diff --stat main...HEAD
-   # If total new lines > 400 or files > 10 → STOP
-   # Split remaining work into a new phase BEFORE continuing
+   # The base: the parent phase's branch when stacked, main when serial
+   BASE=$(gh stack view --json 2>/dev/null | grep -o '"parent":"[^"]*"' | head -1 | cut -d'"' -f4)
+   BASE=${BASE:-main}
+   echo "midiendo contra: $BASE"
+
+   git diff --stat "$BASE"...HEAD          # implementación + tests de ESTA fase
+   # > 400 líneas nuevas o > 10 archivos → STOP y partir la fase
    ```
+   If `gh stack view` is unavailable, the base is whatever the PR targets — read it from the
+   PR, do not assume `main`. **A cap measured against the wrong base is worse than no cap**:
+   it either splits phases that did not need splitting, or silently lets one through.
    If over 400 lines: **do NOT proceed** with make check or PR. Remove excess code, move it to a TODO for the next phase, and re-check.
 2. Run test command from context (`make check`, etc.) — 0 issues. Must satisfy the NovoPayment Go
    quality gates: **staticcheck · go vet · gosec · gocyclo · ineffassign · `go test -cover`**.
