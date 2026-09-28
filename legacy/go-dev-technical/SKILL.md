@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.15.0"
+  version: "2.16.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -1350,6 +1350,22 @@ grep -rnE "func .*\)(Get|Find|Read|List)[A-Za-z]*\(|New[A-Za-z]*Repository\(" <s
 # A module re-reading a shared domain table in its OWN repository → candidate reuse violation
 grep -rln "<SHARED_TABLE_NAME>" internal/modules/*/repository/ --include="*.go" | grep -v _test.go
 ```
+
+**The opposite direction is also a finding.** Extending the shared DTO/query is correct when the
+new column is a genuine attribute of the entity the reader already models (Customer gains a
+Customer field). It is a finding — not the fix — when the new column only makes sense for **one**
+consumer and none of the others already reusing that reader: that turns the shared reader into a
+grab-bag accumulating knowledge from every module that ever touched it, and breaks the boundary of
+the domain concept the reader is supposed to represent. In that case the field belongs behind an
+adapter/translator in the consuming module, not bolted onto the shared reader with knowledge that
+isn't its own.
+
+**Report format (grab-bag):**
+
+> `[reuse-leak]` `<shared-repo-pkg>/<reader>.go` — the column `<column>` added by this PR is only
+> used by `modules/<m>`; no other consumer of the shared reader needs it. Resolve it with an
+> adapter in `modules/<m>` instead of extending the shared DTO with knowledge specific to one
+> module.
 
 **Example (zinli-business-be-go)** — the rule in the concrete project: the shared reader is
 `internal/plataform/repository/customer.GetCustomer(tagPay, cardToken)` returning a
