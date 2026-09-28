@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.10.0"
+  version: "4.11.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -1004,6 +1004,17 @@ a parallel data-access stack.
 
 - **Look first** in the project's shared/platform package for a reader over the tables you need,
   plus any helper that locates one item inside the returned aggregate. Reuse it.
+- **Before reusing it, classify what it actually is** — a "shared/platform" reader can mean two
+  different things, and treating both the same is how a domain concept ends up living where no
+  module owns it:
+  - **Generic mechanics** (query builder wrappers, connection/executor, pagination helpers) —
+    belongs in `platform`/`plataform`, no question.
+  - **A real domain concept** (Customer, Card, Account) that several modules happen to consume —
+    this is not infrastructure, it is **cross-module consumption of a business concept**. Route it
+    through rule 0b's second branch (consume via a local interface, or plan its own module) instead
+    of defaulting to "it's already in platform, so reuse it as-is." If it is already sitting under
+    `platform` today, that is a placement debt to name in the phase plan, not a reason to keep
+    extending it as if it were generic.
 - **If it lacks a column** the new flow needs: **extend the shared query + the shared DTO** — the
   change is additive and every consumer benefits. Do NOT build a new `sql_repository.go` + Row
   struct + `ScanColumns` + `mapper.go` + a local DTO to re-read the same tables. Well-built
@@ -1020,6 +1031,12 @@ a parallel data-access stack.
 `setCardPin` migration needing `SEQUENCE_NUMBER`/`CARD_PROGRAM` extends that shared query+DTO — it
 must not fork a parallel card reader.
 
+*Honest caveat on that same example*: `customer.GetCustomer` is exactly the second case above —
+a domain concept (Customer) sitting under `plataform` rather than owned by its own module. It is
+documented here as the reader that already exists in the real repo, not endorsed as where a new
+one like it should be placed going forward. New readers over a business entity default to their
+own module (rule 0b); only genuine infrastructure defaults to `plataform`.
+
 ### 0b. The endpoint needs data it does not own — decide WHERE it comes from (do this before any repository)
 
 Rule 0 answers one case: a shared/platform reader already reads the table. A migrated endpoint
@@ -1030,7 +1047,11 @@ domains permanently. Answer this at **STEP 0**, before the phase plan:
 El endpoint necesita un dato que no es suyo. ¿Quién lo posee?
 │
 ├── Un reader compartido/plataforma ya lo lee
-│      → REUSARLO. Extender su query + DTO si falta una columna (regla 0)
+│      → Clasifícalo primero (regla 0): ¿mecánica genérica, o un concepto de
+│        dominio que solo da la casualidad de vivir ahí? Solo lo primero se
+│        reusa sin más — lo segundo sigue la rama de abajo
+│      → Si es mecánica genérica: REUSARLO. Extender su query + DTO si falta
+│        una columna (regla 0)
 │
 ├── Otro MÓDULO DE NEGOCIO lo posee (cards, accounts, …)
 │      → Declarar la interfaz MÍNIMA acá, en el consumidor, y que el service
