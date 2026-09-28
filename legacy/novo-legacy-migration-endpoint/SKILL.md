@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.11.0"
+  version: "4.12.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -1015,10 +1015,27 @@ a parallel data-access stack.
     of defaulting to "it's already in platform, so reuse it as-is." If it is already sitting under
     `platform` today, that is a placement debt to name in the phase plan, not a reason to keep
     extending it as if it were generic.
-- **If it lacks a column** the new flow needs: **extend the shared query + the shared DTO** — the
-  change is additive and every consumer benefits. Do NOT build a new `sql_repository.go` + Row
-  struct + `ScanColumns` + `mapper.go` + a local DTO to re-read the same tables. Well-built
-  duplication is still duplication.
+
+  **Classifying it as a domain concept is never a licence to fork your own reader.** The
+  classification changes *how you consume it* — through a local interface instead of reaching for
+  its DTO — never *whether you duplicate it*. A parallel data-access stack over the same tables is
+  a check 8a finding regardless of how the existing reader is classified.
+- **If it lacks a column** the new flow needs, the answer depends on **whose knowledge that
+  column is** — decide before writing it, because `go-dev-technical` check 8a enforces both
+  directions:
+  - **A genuine attribute of the entity the reader models** (Customer gains a Customer field) →
+    **extend the shared query + the shared DTO.** The change is additive and every consumer
+    benefits. Do NOT build a new `sql_repository.go` + Row struct + `ScanColumns` + `mapper.go` +
+    a local DTO to re-read the same tables. Well-built duplication is still duplication.
+  - **Only meaningful to THIS consumer**, and to none of the others already reusing that reader →
+    **do not extend it.** The field goes behind an adapter/translator in your own module. Bolting
+    it on turns the shared reader into a grab-bag accumulating knowledge from every module that
+    ever touched it — review check 8a reports that as `[reuse-leak]`, so extending it here costs a
+    review round.
+
+  The test, in one question: *if another consumer of this reader read that field, would it mean
+  anything to them?* Yes → it belongs to the entity, extend. No → it is your module's knowledge,
+  adapt it locally.
 - **A new dedicated reader is justified only** when it returns data the shared reader structurally
   cannot (a genuinely different aggregate) — not merely a couple of extra columns or a filter a
   consumer can apply on the returned aggregate.
@@ -1048,10 +1065,15 @@ El endpoint necesita un dato que no es suyo. ¿Quién lo posee?
 │
 ├── Un reader compartido/plataforma ya lo lee
 │      → Clasifícalo primero (regla 0): ¿mecánica genérica, o un concepto de
-│        dominio que solo da la casualidad de vivir ahí? Solo lo primero se
-│        reusa sin más — lo segundo sigue la rama de abajo
-│      → Si es mecánica genérica: REUSARLO. Extender su query + DTO si falta
-│        una columna (regla 0)
+│        dominio que solo da la casualidad de vivir ahí?
+│      → MECÁNICA GENÉRICA: REUSARLO. Extender su query + DTO solo si la
+│        columna es atributo genuino de la entidad (regla 0)
+│      → CONCEPTO DE DOMINIO, y ya existe bajo platform: consumirlo igual —
+│        es lo que hay hoy— pero declarando una interfaz local en TU módulo,
+│        no acoplándote a su DTO. Registrar la deuda de ubicación en el plan
+│        de fases. NO forkear un reader paralelo
+│      → CONCEPTO DE DOMINIO que todavía no existe: no lo crees en platform;
+│        va en el módulo que lo posee (rama de abajo)
 │
 ├── Otro MÓDULO DE NEGOCIO lo posee (cards, accounts, …)
 │      → Declarar la interfaz MÍNIMA acá, en el consumidor, y que el service
