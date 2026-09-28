@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.9.0"
+  version: "4.10.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -1033,8 +1033,9 @@ El endpoint necesita un dato que no es suyo. ¿Quién lo posee?
 │      → REUSARLO. Extender su query + DTO si falta una columna (regla 0)
 │
 ├── Otro MÓDULO DE NEGOCIO lo posee (cards, accounts, …)
-│      → Consumir la INTERFAZ de ese módulo, inyectada en main.go.
-│        NUNCA su Repository, sus structs internos, ni su DB
+│      → Declarar la interfaz MÍNIMA acá, en el consumidor, y que el service
+│        de ese módulo la satisfaga (structural typing, sin import cruzado).
+│        Se inyecta en main.go. NUNCA su Repository, structs internos, ni su DB
 │
 ├── Es transversal de verdad — no es propiedad de ningún módulo
 │      → Modelarlo en shared/ (no resolverlo entrando al repo de otro)
@@ -1066,20 +1067,63 @@ rule gets broken during a migration: the legacy Java method read six tables inli
 naive port writes one repository over all six. The mechanism does not change with size — only
 the size of the method you add to the provider's interface does.
 
-#### Ask for a `Reader`, not the whole `Service`
+#### The interface goes on the CONSUMER side — that is what kills the import cycle
 
-When this endpoint consumes another module, depend on the **narrowest** interface. One
-concrete struct in the provider satisfies both — this is interface segregation, not two
-implementations:
+Depend on the **narrowest** interface, and declare it **in the consuming package**, not in
+the provider. This is the Go idiom "accept interfaces, return structs", and it buys two
+things a provider-side interface does not:
 
-- `Reader` — side-effect-free reads that other **modules** consume in-process
-- `Actions` — the business flows the provider's own **handler** exposes over HTTP
-- `Service` — `Reader` + `Actions`, for a consumer that genuinely needs both
+- **The consumer declares only what it uses** — one or two methods, not the provider's whole
+  public contract. Interface segregation decided by whoever *consumes*, not whoever provides
+- **It structurally eliminates the import-cycle risk between business modules.** `accounts`
+  never needs `import ".../cards"` to name the type: Go's **structural typing** means the
+  provider's concrete struct satisfies it implicitly. The only package importing both is
+  `main.go`, the composition root, which already does the wiring
 
-The consuming module declares the small one (`Cards cards.Reader`), so it cannot call
-`IssueCard`/`BlockCard` by accident and the review sees the real coupling. That is
-`go-dev-technical` check 19b — an interface carrying more than the consumer uses — applied
-before the code exists rather than found afterward.
+```go
+// accounts/service.go — la interfaz vive del lado del CONSUMIDOR
+type CardsReader interface {
+    GetCardBIN(ctx context.Context, cardID string) (string, error)  // solo lo que accounts usa
+}
+
+// accounts/module.go
+type Module struct {
+    Cards CardsReader   // interfaz local — NO cards.Reader, no hay import de cards
+}
+```
+
+```go
+// cards/service.go — el proveedor NO sabe que accounts existe.
+// Satisface accounts.CardsReader implícitamente, sin import cruzado.
+func (s *service) GetCardBIN(ctx context.Context, cardID string) (string, error) { … }
+```
+
+```go
+// main.go — único lugar que importa ambos paquetes
+accountsMod := &accounts.Module{Cards: cardsMod.Service()}
+app.RegisterModules(cardsMod, accountsMod)   // proveedor primero
+```
+
+A side benefit worth stating: when the provider later adds or removes business methods the
+consumer never used, **the consumer does not even notice** — it only breaks if one of the
+one or two methods it actually declared changes.
+
+**Where the interface still belongs to the provider** — the distinction is *who consumes it*:
+
+| Contract | Interface lives in | Why |
+|---|---|---|
+| Another **module** consuming cross-module (`accounts` → `cards`) | **the consumer** (`accounts.CardsReader`) | least privilege, no cross import, no cycle |
+| The module's **own** handler → its service (`Actions`, `Service`) | the **provider** | it is internal to that module, not a cross-module contract |
+| **Several modules** consuming the exact same subset | the provider (`cards.Reader`) | one versioned contract beats the same local interface copy-pasted into each consumer |
+
+**What this does NOT fix.** Consumer-side interfaces remove the *import* cycle; they do not
+remove a **real bidirectional dependency**. If `cards` also genuinely needs something from
+`accounts`, no interface placement saves you — that is a design signal: the shared piece
+probably belongs in a third module or `shared/`, or the direction should be inverted with an
+event instead of a direct call. Say so in the roadmap rather than wiring both directions.
+
+Either way this is `go-dev-technical` check 19b — an interface carrying more than the
+consumer uses — applied before the code exists rather than found in review.
 
 **Two constraints on anything exposed cross-module:**
 
@@ -1099,7 +1143,7 @@ method is a change in the PROVIDER module, not in this one**. Plan it accordingl
   compiling. `gh stack add` the consuming phases on top of it
 - In **serial** mode it merges first
 - Say it out loud in the roadmap, because it is the one phase the user may not expect:
-  > Fase 1 — `cards`: exponer `GetCardBIN` en `cards.Reader` (~40 líneas, módulo ajeno)
+  > Fase 1 — `cards`: exponer `GetCardBIN` en su service (~40 líneas, módulo ajeno)
   > Fase 2 — `operations`: repositorio propio (sobre fase 1)
 
 **Wiring rules that decide whether it even starts** (details in `go-bricks-modules`):
@@ -1802,7 +1846,8 @@ getting them wrong costs a re-plan, not an edit:
 - [ ] **Does a shared reader already cover these tables?** (Rule 0.) Answer before planning
       a repository phase, because the answer can delete the phase
 - [ ] **For every piece of data this endpoint needs, who owns it?** Run the rule 0b tree:
-      shared reader → reuse it; another business module → consume its `Reader` interface,
+      shared reader → reuse it; another business module → declare a **local** interface in
+      **this** module with only the methods needed and have that module's service satisfy it,
       never its repository; truly cross-cutting → `shared/`; this module → its own repository.
       A read the provider does not expose yet becomes **its own phase in the provider module**,
       and in stacked mode it is the bottom of the stack
@@ -2166,10 +2211,12 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | Hand-set a PR's base branch to fake a stack | `gh stack add` / `submit`, or run serial. A hand-made stack is one `gh stack` cannot sync |
 | Let a lower PR take review changes without re-syncing | `gh stack sync` — otherwise every diff above it is wrong |
 | `gh stack merge` on the top PR out of habit | Merge up to the **last approved** phase; it is all-or-nothing |
-| Write a repository over tables another module owns | Consume that module's `Reader` interface (rule 0b) |
+| Write a repository over tables another module owns | Declare a local interface here and let that module's service satisfy it (rule 0b) |
 | Reach into another module's `Repository`, internal structs or DB | Only its exported interface — `deps.DB(ctx)` is per-tenant, per-request |
 | "Es una sola query, la leo directo" | Same mechanism regardless of size: add the method to the provider's `Reader` |
-| Inject the full `Service` when only reads are needed | Declare `cards.Reader` — least privilege, and review 19b sees the real coupling |
+| Inject the full `Service` when only reads are needed | Declare a local interface with the 1-2 methods used — least privilege, review 19b sees the real coupling |
+| Declare the cross-module interface in the PROVIDER and import it | Declare it in the CONSUMER — structural typing satisfies it with no cross import, so no import cycle is even possible |
+| Wire `cards → accounts` and `accounts → cards` both ways | A real bidirectional dependency is a design signal: third module, `shared/`, or an event — interface placement does not fix it |
 | Return an HTTP DTO across a module boundary | Domain types only; DTOs belong to the handler |
 | A cross-module read that publishes to the bus or writes the outbox | Reads have no side effects, or every consumer becomes a producer |
 | An internal HTTP endpoint to serve a sibling module | In-process interface injection — same binary, no network |
