@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.8.0"
+  version: "4.9.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -1020,6 +1020,99 @@ a parallel data-access stack.
 `setCardPin` migration needing `SEQUENCE_NUMBER`/`CARD_PROGRAM` extends that shared query+DTO — it
 must not fork a parallel card reader.
 
+### 0b. The endpoint needs data it does not own — decide WHERE it comes from (do this before any repository)
+
+Rule 0 answers one case: a shared/platform reader already reads the table. A migrated endpoint
+hits three other cases, and picking wrong produces code that reviews badly and couples two
+domains permanently. Answer this at **STEP 0**, before the phase plan:
+
+```
+El endpoint necesita un dato que no es suyo. ¿Quién lo posee?
+│
+├── Un reader compartido/plataforma ya lo lee
+│      → REUSARLO. Extender su query + DTO si falta una columna (regla 0)
+│
+├── Otro MÓDULO DE NEGOCIO lo posee (cards, accounts, …)
+│      → Consumir la INTERFAZ de ese módulo, inyectada en main.go.
+│        NUNCA su Repository, sus structs internos, ni su DB
+│
+├── Es transversal de verdad — no es propiedad de ningún módulo
+│      → Modelarlo en shared/ (no resolverlo entrando al repo de otro)
+│
+└── Lo posee ESTE módulo
+       → Repositorio propio, con las reglas 1-5 de abajo
+```
+
+**The base patterns — interface injection for domain services, provider interface
+(`app.OutboxProvider`, `app.KeyStoreProvider`) only for framework-managed cross-cutting
+infrastructure — belong to the `go-bricks-modules` skill. Do not restate them here; read it
+when wiring.** What follows is only what changes *during a migration*.
+
+#### Why never the other module's repository or DB
+
+Three reasons, and the first is the one that bites in production:
+
+- **`deps.DB(ctx)` resolves the connection per tenant, per request.** Holding or reusing
+  another module's repository or `*sql.DB` breaks multi-tenant isolation — and it breaks it
+  silently, serving one tenant's data under another's request
+- **`Repository` is an internal layer, not an exported contract.** Coupling to it ties the
+  consumer to the other module's schema, so a new table, a cache or a partition change breaks
+  the consumer with no compiler warning
+- **`service.go` is explicitly what other modules consume** in the go-bricks standard; the
+  repository is not
+
+**This holds even for a single column.** "It's just one query" is the most common way this
+rule gets broken during a migration: the legacy Java method read six tables inline, and the
+naive port writes one repository over all six. The mechanism does not change with size — only
+the size of the method you add to the provider's interface does.
+
+#### Ask for a `Reader`, not the whole `Service`
+
+When this endpoint consumes another module, depend on the **narrowest** interface. One
+concrete struct in the provider satisfies both — this is interface segregation, not two
+implementations:
+
+- `Reader` — side-effect-free reads that other **modules** consume in-process
+- `Actions` — the business flows the provider's own **handler** exposes over HTTP
+- `Service` — `Reader` + `Actions`, for a consumer that genuinely needs both
+
+The consuming module declares the small one (`Cards cards.Reader`), so it cannot call
+`IssueCard`/`BlockCard` by accident and the review sees the real coupling. That is
+`go-dev-technical` check 19b — an interface carrying more than the consumer uses — applied
+before the code exists rather than found afterward.
+
+**Two constraints on anything exposed cross-module:**
+
+- **Return domain types, never HTTP request/response DTOs.** Those belong to the `handler`;
+  crossing a module boundary with one drags a transport contract into a domain dependency
+- **No side effects in a cross-module read** — no bus publish, no outbox write. A read that
+  emits events turns every consumer into an accidental producer
+
+#### What this does to the phase plan (the part that is migration-specific)
+
+If the endpoint needs a read that the provider module does not expose yet, **adding that
+method is a change in the PROVIDER module, not in this one**. Plan it accordingly:
+
+- It is **its own phase and its own PR** — a different module, different owner, possibly a
+  different reviewer
+- In **stacked** mode it is the **bottom of the stack**: every later phase depends on it
+  compiling. `gh stack add` the consuming phases on top of it
+- In **serial** mode it merges first
+- Say it out loud in the roadmap, because it is the one phase the user may not expect:
+  > Fase 1 — `cards`: exponer `GetCardBIN` en `cards.Reader` (~40 líneas, módulo ajeno)
+  > Fase 2 — `operations`: repositorio propio (sobre fase 1)
+
+**Wiring rules that decide whether it even starts** (details in `go-bricks-modules`):
+
+- **Registration order in `main.go` is load-bearing**: the provider must be registered before
+  the consumer. Get it wrong and the dependency arrives `nil` — **at runtime, on the first
+  request that path serves**. No linter catches it
+- **`Init()` fails fast**: if a required dependency was not injected, `return error` with the
+  module name. A module that constructs itself half-wired defers the failure to production
+- **Never expose internal HTTP between modules of the same binary.** This is in-process
+  interface injection, not a network call — an internal endpoint to serve a sibling module is
+  a latency, auth and observability problem invented to avoid a struct field
+
 ### 1. The query builder is the default — raw SQL is an exception you must justify
 
 **Not a preference, a default with a burden of proof.** Every query this skill writes goes
@@ -1708,6 +1801,11 @@ getting them wrong costs a re-plan, not an edit:
       in the roadmap — do not quietly add site three
 - [ ] **Does a shared reader already cover these tables?** (Rule 0.) Answer before planning
       a repository phase, because the answer can delete the phase
+- [ ] **For every piece of data this endpoint needs, who owns it?** Run the rule 0b tree:
+      shared reader → reuse it; another business module → consume its `Reader` interface,
+      never its repository; truly cross-cutting → `shared/`; this module → its own repository.
+      A read the provider does not expose yet becomes **its own phase in the provider module**,
+      and in stacked mode it is the bottom of the stack
 - [ ] **Is this endpoint plaintext or encrypted?** Declare it. A module that opts out of
       encryption must not silently opt out of telemetry
 - [ ] **Does anything here touch money?** If the flow decides whether funds moved, reversed,
@@ -2068,3 +2166,11 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | Hand-set a PR's base branch to fake a stack | `gh stack add` / `submit`, or run serial. A hand-made stack is one `gh stack` cannot sync |
 | Let a lower PR take review changes without re-syncing | `gh stack sync` — otherwise every diff above it is wrong |
 | `gh stack merge` on the top PR out of habit | Merge up to the **last approved** phase; it is all-or-nothing |
+| Write a repository over tables another module owns | Consume that module's `Reader` interface (rule 0b) |
+| Reach into another module's `Repository`, internal structs or DB | Only its exported interface — `deps.DB(ctx)` is per-tenant, per-request |
+| "Es una sola query, la leo directo" | Same mechanism regardless of size: add the method to the provider's `Reader` |
+| Inject the full `Service` when only reads are needed | Declare `cards.Reader` — least privilege, and review 19b sees the real coupling |
+| Return an HTTP DTO across a module boundary | Domain types only; DTOs belong to the handler |
+| A cross-module read that publishes to the bus or writes the outbox | Reads have no side effects, or every consumer becomes a producer |
+| An internal HTTP endpoint to serve a sibling module | In-process interface injection — same binary, no network |
+| Register the consumer before the provider in `main.go` | Provider first, or the dependency is `nil` at runtime and no linter catches it |
