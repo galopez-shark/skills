@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.12.0"
+  version: "4.13.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
   role: specialist
@@ -1994,6 +1994,25 @@ changes WHICH error wins or its precedence, that IS a 🔴 divergence.
 | **External clients in shared pkg** | Not in service/ |
 | **Filtering in SQL** | Never in-memory |
 | **Config in both files** | Env placeholders + local values |
+
+### Tenant Config Sections
+
+Before adding a new `mapstructure:"<name>"` section to a module's own tenant-config struct
+(`tenantCustom` or equivalent), check whether **another module already declares a top-level
+section with that same name** (e.g. `params`, `processing`). If one does, the unexpanded-`${VAR}`
+placeholder warning each module emits at startup can start reporting the OTHER module's own
+switches as if they were yours.
+
+Why: that warning filters by section NAME at the section's own nesting level, not by which module
+owns a leaf underneath it. Two modules both declaring `params` means either one's warning walks
+the WHOLE `params.*` subtree, sibling module's business switches included.
+
+Fix: exclude the sibling's subtree explicitly (e.g. a shared `UnexpandedKeysExcept(custom,
+skip...)` helper next to whatever draws `UnexpandedKeysFor`) BEFORE the new section ships — not
+after a reviewer catches the noise in a real PR. Caught on an embossCard migration (CEB-5935,
+2026-09-30): adding `params.emboss` to `cards`' own tenant config made its startup warning list
+`accounts`' `params.card`/`params.account`/`params.customer` switches too, since both modules
+declare `params`.
 
 ### Date Handling
 
