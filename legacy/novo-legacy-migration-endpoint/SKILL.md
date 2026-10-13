@@ -673,11 +673,25 @@ Accept the endpoint by name, number, or Java method name.
 4. **Read the Go source** if the endpoint is already migrated (`status: done` or `in_progress`) —
    `internal/modules/<go_module>/` (handlers, service, repository, domain). If `not_started`, derive
    the plan from the Java analysis + existing Go patterns in the project.
-5. **Generate the Plan de Desarrollo** following the template below (6 numbered sections).
-6. **Present to the user** for review. Show the full document in chat.
-7. **Ask**: update Jira ticket description? (yes/no)
-   - If yes → convert to ADF and PUT to the ticket via Jira REST API.
-   - If no → done, the user copies it manually.
+5. **Ask ONE question before generating anything (MANDATORY)**:
+   > ¿Este Plan de Desarrollo es un **comparativo** (migración Java→Go, la tabla de Pruebas
+   > Unitarias muestra la respuesta Golang y la respuesta Java lado a lado) o es **solo
+   > certificación** (endpoint nuevo sin legacy detrás, la tabla de Pruebas Unitarias muestra
+   > únicamente la respuesta Go)?
+   This decides the shape of the Pruebas Unitarias table in BOTH outputs below (Jira ADF and the
+   Word/PDF doc) — never guess it from `.migration-context.yaml` alone, since a `done` endpoint
+   can still be a non-migration addition (e.g. a brand-new field, not a legacy port).
+6. **Generate the Plan de Desarrollo** following the template below (6 numbered sections) for the
+   Jira description.
+7. **Present to the user** for review. Show the full document in chat.
+8. **Ask**: which output(s) does the user want?
+   - **Jira ticket description** → convert to ADF and PUT to the ticket via Jira REST API (see
+     "Jira update" below).
+   - **Word/PDF document** (the formal "Plan de Desarrollo" artifact filed under
+     `.../proyectos/zinli/{TICKET}({Descripción})/documentacion/`) → follow "Word/PDF output"
+     below. This is a SEPARATE deliverable from the Jira description — same content, different
+     format and audience (QA/certificación vs. developer ticket).
+   - Both are independent; the user can ask for either or both.
 
 ### Template (6 sections — MANDATORY, in this exact order)
 
@@ -814,6 +828,104 @@ When the user approves the update:
    ```
    ✅ Plan de Desarrollo actualizado en {TICKET_KEY}
    ```
+
+### Word/PDF output (formal Plan de Desarrollo document)
+
+This produces the corporate `.docx`/`.pdf` artifact, independent of the Jira description above.
+**Read `PROMPT_PLAN_DESARROLLO.md` in full before starting** — it owns the project-agnostic
+process (8 phases: discovery, question round, build, Word generation, PlantUML diagrams, Python
+helpers, PDF export, final checklist). What follows here is only the migration-specific layer on
+top of that generic process — gotchas learned building CEB-5633 (createDebitCard), don't
+rediscover them by trial and error.
+
+**Files (always the same, never hardcode a copy elsewhere):**
+- Guide: `.../Novopayment/UtilidadesNovopayment/plantillas/PROMPT_PLAN_DESARROLLO.md`
+- Base template (always clone, never create from scratch, never edit a sibling ticket's filled
+  docx in place): `.../Novopayment/UtilidadesNovopayment/plantillas/Plan_de_Desarrollo_BASE.docx`
+- Destination: `.../proyectos/zinli/{TICKET}({Descripción})/documentacion/Plan_de_Desarrollo_{TICKET}({Descripción}).docx`
+  (+ matching `.pdf`). If that folder already has a `.docx` under this ticket's name, **open and
+  read it first** — it may contain another ticket's content pasted in by mistake (this happened on
+  CEB-5633: the file was named for CEB-5633 but internally was 100% CEB-5614 content). Never trust
+  the filename; grep the actual paragraphs/tables for the ticket number and endpoint name before
+  treating it as a starting point. If it's wrong, clone fresh from BASE — never patch over
+  contaminated content.
+
+**Before writing anything, inspect the REAL base template structure** (don't assume it matches a
+previously-filled sibling doc — they can diverge): dump every `doc.paragraphs` (index + style) and
+every `doc.tables` (all rows/cells, including `gridSpan`/`vMerge` via the XML) with a throwaway
+python-docx script. As of the version used for CEB-5633, the base template has **6 real headings
+you'll touch** (Historial de cambios, Control de Revisión, Alcance, Definiciones, Estructura →
+Descripción de Clases / Estructura de datos → Nombre del esquema, Construcción, Ajustes
+realizados, Pruebas Unitarias, Datos para Configurar e Instalar, Requisitos para la Certificación)
+and **6 tables** in that order. It does **not** ship a "Descripción de Flujo" heading, and its
+Pruebas Unitarias table is a **flat 3-column table with no example row** (N° | Alcance |
+Descripción, span 1 everywhere) — confirm this hasn't changed before assuming either shape.
+
+**The comparativo/sin-comparativa branch (from step 5 of the Workflow above) changes the Pruebas
+Unitarias table shape:**
+
+- **Sin comparativa** (no legacy): fill the base's native flat table as-is — one row per `EST-NN`,
+  clone rows with `copy_row_and_fill`, no merge needed. Simple, low risk.
+- **Comparativo** (migración): you need a **3-row-per-case pattern** (case header row with
+  `gridSpan` on the Alcance columns → label row "RESPONSE GOLANG" / "RESPONSE JAVA" with `vMerge` →
+  content row with the two responses side by side) that **the clean base template does not ship as
+  an example**. Don't hand-build that `gridSpan`/`vMerge` XML — it's exactly the kind of thing that
+  silently corrupts a `.docx`. Instead, **source that 3-row block from an already-finished sibling
+  ticket's doc that used the comparativo format** (e.g. the CEB-5614 or CEB-5633 filled docs),
+  deep-copy its header + one case's 3 rows into the destination's Pruebas Unitarias table, clear
+  every cell with `cell_clear_and_set`, then clone that cleaned block once per `EST-NN` with
+  `copy_row_and_fill`. This is the only way to get real merges instead of built-by-hand ones.
+- **Always add a "Descripción de Flujo" H2** (clone the "Descripción de Clases" paragraph for the
+  heading style) between Clases and Estructura de datos — the base template doesn't have it by
+  default, but the process always needs a flow diagram there.
+
+**Response-cell styling (mandatory, makes JSON readable):** in Pruebas Unitarias, every response
+cell (Go and/or Java) must use a monospace font — `Consolas`, 8.5pt. Set `r.font.name`, `r.font.size`
+AND the `w:rFonts/@w:eastAsia` attribute (python-docx silently ignores just the first two in some
+Word renderers without the third).
+
+**Non-reproducible cases must be flagged, never silently listed as normal cases.** Any `EST-NN`
+that requires an external stub/mock (KYC, SGC, any third-party connector), fault-injection
+(forcing a DB failure), or real concurrency (two parallel requests) is **not something QA can
+trigger manually with Postman in the standard flow**. Prefix its Alcance with
+**"🔒 NO REPRODUCIBLE MANUALMENTE — "** and append a note to its Descripción explaining what it
+needs (stub/mock, fault-injection, integration-test harness) instead of presenting it as an
+ordinary case QA should just go execute.
+
+**Certificación table has no labels in the clean base** — write them yourself (copied verbatim
+from a finished sibling doc's layout: Código de Prioridad, Fecha, N° de Ticket, Usuario
+Solicitante, Incidente/Requerimiento/Proyecto de Cambio, Aplicación, Tipo, País, Subsidiarias, URL,
+Usuario, Clave, Ruta de Repositorio, Otros) using `cell_clear_and_set` for both label and value in
+the same pass, to avoid leftover text from whatever doc you copied the layout from.
+
+**PCI — never put real or placeholder credentials in "Usuario"/"Clave".** Leave both empty even
+when a value is technically known; this is the global PCI policy (`~/.claude/CLAUDE.md`), not
+optional per-ticket judgment.
+
+**"Ruta de Repositorio" is the deployed-to-TEST reference, not an arbitrary commit.** Prefer the
+latest git tag on `main` (`git tag --sort=-creatordate | head -1`) over a raw commit SHA. If you
+cannot confirm via `gh` (auth can expire mid-session) that this specific tag already deployed to
+TEST, say so explicitly to the user as a pending verification — don't silently assume it did.
+
+**Diagrams**: reuse an existing, already-validated `.plantuml` from `docs/modules/<module>/` for
+the flow diagram (never invent a new flow when the team already maintains one) — just prepend the
+Novopayment skin block (FASE 5 of the guide) and re-render. Class and data-structure diagrams are
+usually new; build them from the real Go types/tables (never generic placeholders — a prior
+session had its first diagram attempt rejected for being generic), apply the same skin, render
+with the local `plantuml` binary.
+
+**Final residue check is a real grep, not a visual skim.** After saving, search every XML part of
+the `.docx` (it's a zip) for keywords unique to whatever content you copied structure/layout from
+(ticket number, endpoint name, sample PAN/IDs) and confirm zero matches — except expected false
+positives like a numeric `w:id` in `webSettings.xml` that happens to contain the ticket number as
+a substring (verify it's inside a larger number, not the standalone ticket reference).
+
+**If this is intricate enough to risk breaking table merges, delegate it** (per this repo's
+Fable-delegation policy) to a `general-purpose` agent with: the exact base template + guide paths,
+the content already fully drafted (text for all 6 sections + the EST table content, resolved
+BEFORE delegating — never ask the agent to invent business content), and explicit instructions to
+**stop and report back** if the real template structure doesn't match what's described here, rather
+than improvising a merge by hand.
 
 ### When to use this vs other subcommands
 
