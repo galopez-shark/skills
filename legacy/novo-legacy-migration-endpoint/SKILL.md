@@ -838,10 +838,12 @@ helpers, PDF export, final checklist). What follows here is only the migration-s
 top of that generic process — gotchas learned building CEB-5633 (createDebitCard), don't
 rediscover them by trial and error.
 
-**Files (always the same, never hardcode a copy elsewhere):**
-- Guide: `.../Novopayment/UtilidadesNovopayment/plantillas/PROMPT_PLAN_DESARROLLO.md`
+**Files (bundled with this skill — portable, works on any machine without the OneDrive mount):**
+- Guide: `assets/PROMPT_PLAN_DESARROLLO.md` (relative to this skill's own directory)
 - Base template (always clone, never create from scratch, never edit a sibling ticket's filled
-  docx in place): `.../Novopayment/UtilidadesNovopayment/plantillas/Plan_de_Desarrollo_BASE.docx`
+  docx in place): `assets/Plan_de_Desarrollo_BASE.docx` (relative to this skill's own directory).
+  If the user's OneDrive has a newer version of either file, prefer theirs and update this skill's
+  bundled copy in the same step — don't silently drift from the canonical source.
 - Destination: `.../proyectos/zinli/{TICKET}({Descripción})/documentacion/Plan_de_Desarrollo_{TICKET}({Descripción}).docx`
   (+ matching `.pdf`). If that folder already has a `.docx` under this ticket's name, **open and
   read it first** — it may contain another ticket's content pasted in by mistake (this happened on
@@ -884,13 +886,55 @@ cell (Go and/or Java) must use a monospace font — `Consolas`, 8.5pt. Set `r.fo
 AND the `w:rFonts/@w:eastAsia` attribute (python-docx silently ignores just the first two in some
 Word renderers without the third).
 
-**Non-reproducible cases must be flagged, never silently listed as normal cases.** Any `EST-NN`
-that requires an external stub/mock (KYC, SGC, any third-party connector), fault-injection
-(forcing a DB failure), or real concurrency (two parallel requests) is **not something QA can
-trigger manually with Postman in the standard flow**. Prefix its Alcance with
-**"🔒 NO REPRODUCIBLE MANUALMENTE — "** and append a note to its Descripción explaining what it
-needs (stub/mock, fault-injection, integration-test harness) instead of presenting it as an
-ordinary case QA should just go execute.
+**Non-reproducible cases: ask the user, default to removing them, never silently list them as
+normal cases.** Any `EST-NN` that requires an external stub/mock (KYC, SGC, any third-party
+connector), fault-injection (forcing a DB failure), or real concurrency (two parallel requests) is
+**not something QA can trigger manually with Postman in the standard flow**. First pass: prefix
+its Alcance with **"🔒 NO REPRODUCIBLE MANUALMENTE — "** and note what it needs. Then **ask the
+user whether to keep it flagged or remove it from the table entirely** — on CEB-5633 the user's
+call was to remove all 6 such cases outright ("no se puede así que sobra"), since a flagged-but-
+unexecutable row in a QA certification doc is still noise. Removing a 3-row comparativo block:
+delete its 3 `w:tr` elements from the table XML, then **renumber every remaining `EST-NN` /
+"N°" sequentially** (don't leave gaps) and update every place that states the total case count
+(Control de Revisión row, any summary note) — a stale "22 casos" after deleting 6 is an immediate
+tell that the doc wasn't finished.
+
+**Headers validation needs one case PER field PER failure mode, never two generic buckets.** A
+"Header requerido ausente" / "Header con formato inválido" pair collapsing country+language+channel
+into 2 rows is under-specified — the team's own reference docs (e.g. CEB-5614) split each header
+into its own case: *Sin header country*, *Sin header language*, *Sin header channel*, *Country
+formato inválido*, *Language formato inválido*, *Channel formato inválido* (6 cases minimum,
+matching whatever fields `auth.HeadersValidator`/equivalent actually validates — don't invent
+fields it doesn't check, like Content-Type/Accept, unless the code validates those too). Apply the
+same "one case per field per failure mode" principle to any other multi-field validator.
+
+**Never leave a literal `"..."` placeholder in a response example.** It reads as unfinished. Fill
+every field with a realistic, internally-consistent example value (an ISO datetime, a plausible
+token/UUID shaped like the real one — e.g. the exact 37-char UUID-hex+salt format `generateCardToken`
+produces, if that's the field) instead of an ellipsis. This is NOT a PCI concern — these are
+non-sensitive example dates, tokens and IDs, not PAN/CVV/passwords — so there's no reason to leave
+them as placeholders. **When a label field is blank because it genuinely doesn't apply (not
+because you forgot it), write `"N/A — <one-line reason>"`** instead of leaving the cell visually
+empty — an empty-looking cell in a finished certification doc reads as an oversight, not as "this
+doesn't apply". PCI passwords (`Clave`) are the one exception: those stay truly empty, never even
+`"N/A"` with invented text that could be mistaken for a real value — a short reason belongs in the
+adjacent `Usuario` cell instead (e.g. "N/A — autenticación Bearer, sin login usuario/contraseña").
+
+**The comparativo table's column 0 is a hidden trap — never write content into it.** In the 3-row
+block, column 0 of the label row ("RESPONSE GOLANG"/"RESPONSE JAVA") and column 0 of the content
+row are **vertically merged into ONE cell** (`vMerge`) that must stay blank as a gutter. Go's
+response goes in column 1, Java's in column 2 (column 3 mirrors column 2 via horizontal `gridSpan`
+— writing to one writes to both, since python-docx returns the same Cell object for merged
+columns). **The single most common mistake building this table is an off-by-one**: treating
+column 0 as "the Go column" and columns 1/2 as "the two Java columns" — this silently (a) pollutes
+the blank gutter with Go's text, visible bleeding into the label row, and (b) leaves BOTH visible
+response columns showing Java's text, making it look like Go behaves identically to Java even when
+it was supposed to differ (a real divergence disappears from the document). **After filling the
+table, run a verification pass, case by case, comparing each Go cell's text against what you
+actually know Go does (not what you wrote in bulk) — a bulk find/replace across many rows is
+exactly how this corruption happened on CEB-5633 (6 of 20 cases had Go silently showing Java's
+behavior, caught only when the user spotted one by eye).** Fix one case, re-read it back, THEN
+move to the next — don't trust a large batch edit across the whole table without rereading it.
 
 **Certificación table has no labels in the clean base** — write them yourself (copied verbatim
 from a finished sibling doc's layout: Código de Prioridad, Fecha, N° de Ticket, Usuario
@@ -913,6 +957,14 @@ Novopayment skin block (FASE 5 of the guide) and re-render. Class and data-struc
 usually new; build them from the real Go types/tables (never generic placeholders — a prior
 session had its first diagram attempt rejected for being generic), apply the same skin, render
 with the local `plantuml` binary.
+
+**If the reused flow diagram is too tall to fit one page** (a sequence diagram with many `alt`
+error blocks grows vertically fast — CEB-5633's came out at a 1:2.2 aspect ratio), don't just
+shrink the image until the text is unreadable. Condense each error `alt` block from its full
+2-arrow-plus-`alt`/`end` form into a single `note right of <participant>` summarizing that step's
+rc(s) — this keeps every error path documented while cutting the diagram's height roughly in half,
+often enough to reach a near-square aspect ratio that fits one page at a readable size. Keep the
+happy-path arrows exactly as they are; only the error branches get collapsed into notes.
 
 **Final residue check is a real grep, not a visual skim.** After saving, search every XML part of
 the `.docx` (it's a zip) for keywords unique to whatever content you copied structure/layout from
