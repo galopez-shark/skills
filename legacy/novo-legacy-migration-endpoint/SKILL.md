@@ -452,12 +452,14 @@ Usage: `/migrate parity-solve cashin cases (9,10,11)`
    go-bricks / existing helpers; defer to `target.reference_repo` for patterns.
 5. **Group changes into phases under the cap** — **≤300 new lines AND ≤10 files per phase** (impl +
    tests). If the selected cases exceed it, split into `parity-1`, `parity-2`, … Each phase includes
-   tests, `make check` (0 issues, coverage ≥85%), and a version bump.
+   tests, `make check` (0 issues, coverage floor 70%, goal 85%), and a version bump.
 6. **Present the roadmap and WAIT for approval.** Before creating any branch, **ASK the user for the
    Jira epic/ticket** for these parity fixes. If they give an epic, **search its children for the
    ticket matching this endpoint, show the candidate, and confirm it** before branching (same as
-   Phase START step 2). Then execute phase by phase: **always `git checkout main && git pull` first,
-   then create** `feature/{ticket}-parity-{n}` **from `main`** — one phase merged before the next.
+   Phase START step 2). Then execute phase by phase, creating `feature/{ticket}-parity-{n}` on the
+   base of the active mode (see "Phase sequencing"): stacked → on the previous parity phase's branch
+   (`gh stack add`); serial → `git checkout main && git pull`, branch from `main`, one phase merged
+   before the next.
 
 ### Output (roadmap)
 
@@ -480,7 +482,7 @@ Phases (≤300 líneas · ≤10 files c/u):
 - **Cap is 300 lines / 10 files per phase** — HARD, stricter than the standard 400. Split otherwise.
 - **Verify each case against Java before fixing** — messages/codes are immutable, match exactly.
 - **Only fix the selected cases** — never touch cases the user didn't choose.
-- One branch per phase from `main`; tests + `make check` + version bump per phase; no commit without approval.
+- One branch per phase (base = previous phase if stacked, `main` if serial); tests + `make check` + version bump per phase; no commit without approval.
 
 ---
 
@@ -779,7 +781,7 @@ Reutilizado sin duplicar: {lista de componentes compartidos que se reusan}
 - {Criterio 3: qué servicios externos se llaman y en qué orden}
 - {Criterio 4: paridad de errores con Java}
 - {Criterio 5: make check pasa con 0 issues}
-- {Criterio 6: cobertura >= 85%}
+- {Criterio 6: cobertura >= 70% (piso), meta 85%}
 
 ## 5. Definition of Done
 
@@ -1377,18 +1379,22 @@ it to the PR:
 |---|---|
 | `fmt.Sprintf` / `Fprintf` / `+` concatenation / `strings.Replace` into SQL | **BLOCKER — injection vector.** No exceptions, not even for a one-off admin query |
 | Raw SQL `const` the builder *could* express | SHOULD-FIX — migrate it |
-| Raw SQL `const` the builder cannot express, **with a comment saying why** | ✅ Justified, and check 18b honors that justification instead of re-flagging it |
-| Raw SQL `const` the builder cannot express, **with no comment** | NIT — and the reviewer has to reconstruct your reasoning |
+| Raw SQL `const` the builder cannot express, **with its `// SECURITY: Manual SQL review completed - …` annotation** | ✅ Justified, and check 18b honors that justification instead of re-flagging it |
+| Raw SQL `const` the builder cannot express, **with no annotation** | SHOULD-FIX — go-bricks requires the annotation at every raw call site |
 
 **Two rules that follow, and they are the whole point of doing this at construction time:**
 
 1. **Raw does NOT mean interpolated.** A raw statement still binds every value as a
-   parameter — `:param` (Oracle) or `$N` (PostgreSQL). The escape hatch is from the
+   parameter — positional `:1..n` (Oracle; the builder generates them, and `database.Raw(sql,
+   args...)` takes positional args) or `$N` (PostgreSQL). The escape hatch is from the
    *builder*, never from parameterization. A raw query with a value pasted into the string
    is the BLOCKER above, and being raw does not excuse it
-2. **Write the WHY comment now, in the same commit.** One line above the `const`, naming
-   which construct the builder cannot express (`SYSDATE` in `VALUES`, `WITH`, an optimizer
-   hint). It costs seconds while the reason is in your head, and it converts a review
+2. **Write the SECURITY annotation now, in the same commit.** go-bricks requires
+   `// SECURITY: Manual SQL review completed - <what was verified>` on the line above every
+   `f.Raw`, `jf.Raw`, `database.Raw`, `SetExpr`, string `Having(...)`, `qb.Expr`/`qb.MustExpr`
+   and `RawExpression{}` call site — naming the construct the builder cannot express (`WITH`,
+   an optimizer hint) and the property checked (value-side parameterization, no user-input
+   concatenation). It costs seconds while the reason is in your head, and it converts a review
    finding into a justified exception. Reconstructing it later costs a review round trip
 
 
@@ -1406,18 +1412,15 @@ it to the PR:
 
 ### 2. When a query CANNOT use the builder (keep it raw — parameterized, and documented)
 
-- **`RawExpression` splices inline only in SELECT / GROUP BY / ORDER BY.** In `INSERT VALUES` and
-  `UPDATE SET` it is bound as a parameter instead, which is why a DB-side function placed there
-  becomes a broken bind rather than inline SQL. That is what makes the holdout list in rule 7 above
-  a **closed** list: an Oracle sequence or function in `VALUES`/`SET` (`SEQ.NEXTVAL`, `SYSDATE`),
-  `NVL()` / `||` (or any function) directly inside a `SET` target, and a correlated scalar subquery
-  inside `SET`.
-- **Before writing one of those off as raw, check `SetExpr` for the `UPDATE SET` case.** go-bricks
-  declares `SetExpr(column string, expr RawExpression, args ...any)` on the update builder, and its
-  own doc shows it carrying bound arguments —
-  `SetExpr("lease_until", qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`. Whether that
-  actually splices the expression or binds it **must be confirmed with `ToSQL()` for your vendor**;
-  do not assume either way. If it splices, that statement leaves the holdout list. Likewise prefer
+- **A DB-side function in `INSERT VALUES` / `UPDATE SET` is NOT raw SQL — use `qb.Expr`.** go-bricks
+  splices a `RawExpression` verbatim into the value positions (`Set`, `SetMap`, `SetExpr`, `Values`,
+  `BuildUpsert`) with no placeholder and no arg, so `SEQ.NEXTVAL`, `SYSDATE`, `NVL()` / `||` in a
+  `SET` target and a correlated scalar subquery in `SET` all go through the builder:
+  `Values(id, qb.Expr("SYSDATE"), name)` → `VALUES (:1,SYSDATE,:2)`. Confirm with `ToSQL()` for your
+  vendor. The `f.*` WHERE doors refuse an expression (`ErrExpressionInFilter`) — a WHERE-side
+  expression uses `f.Raw`. Every `qb.Expr` / `SetExpr` call site carries the SECURITY annotation.
+  For an expression with bound args on UPDATE use
+  `SetExpr("lease_until", qb.MustExpr("NOW() + (? * INTERVAL '1 second')"), secs)`. Prefer
   the vendor-aware `BuildCurrentTimestamp()` / `BuildUUIDGeneration()` over a hardcoded `SYSDATE`
   wherever the value — not the expression — is what you need.
 - **Joins, subqueries, grouping, paging and locking are all expressible** — `InnerJoinOn` /
@@ -1427,7 +1430,8 @@ it to the PR:
   `Insert(...).Select(...)`, and `Prefix` / `Suffix` for `RETURNING` / `ON CONFLICT`. None of these
   justifies raw SQL.
 - **The genuinely absent constructs — the accepted reasons to keep a `const` raw — are `UNION`,
-  `WITH` / CTE, and vendor optimizer hints** (verified against go-bricks v0.63.0). Stored
+  `WITH` / CTE, and vendor optimizer hints** (re-derive against your pinned go-bricks with the
+  script below). Stored
   procedures are also absent, but they are banned outright by review check 1d: a proc is a separate
   blocker, never a justification.
 - **Re-derive the list instead of trusting this one** — the builder grows every release:
@@ -1443,27 +1447,27 @@ it to the PR:
   reasons — the last one especially: today's internal caller is tomorrow's endpoint parameter.
   A construct not in that list and not demonstrated by `ToSQL()` means the builder can express it,
   so use it.
-- **Every raw statement carries its one-line WHY**, and the phase's PR body repeats the list of raw
+- **Every raw statement carries its `// SECURITY: Manual SQL review completed - <what was
+  verified>` annotation** on the line above, and the phase's PR body repeats the list of raw
   queries with their reason. That is what the reviewer reads instead of re-deriving it (review
   check 18b), and what the rawQuery audit table of a future `scan` will consume.
 
-### 3. Centralize the exec/error boilerplate — shared `Execute*` helpers
+### 3. Centralize the exec/error boilerplate — go-bricks `database.Execute*` helpers
 
-Every repo repeats the same `getDB → Query → rows.Next/Scan/rows.Err → wrap` and
-`Exec → RowsAffected → wrap` flow. Extract it once into a module-agnostic
-`internal/plataform/repository/executor.go`:
+Every repo repeats the same `ToSQL → Query/Exec → Scan/RowsAffected → wrap` flow. go-bricks
+already ships it — do **not** write a local `executor.go`:
 
-- `ExecuteQuerySingle(ctx, exec, query, opName, notFoundErr, dest...) error` — SELECT ≤1 row; no row
-  → `notFoundErr`; build/exec/scan/iter failures → `AppError(500)` labeled with `opName`.
-- `ExecuteUpdate(ctx, exec, query, opName, notFoundErr) (int64, error)` — 0 rows affected →
-  `notFoundErr`.
-- `ExecuteInsert(ctx, exec, query, opName) error`.
-- `Executor` interface `{ Query; Exec }` is satisfied by BOTH the plain connection and `dbtypes.Tx`
-  → the same helper runs inside or outside a transaction (`var _ Executor = (dbtypes.Tx)(nil)`).
-- `RawQuery{SQL, Args}` implements `ToSQL()` → keep-raw queries (UNION, `FOR UPDATE`) reuse the same
-  helpers, so even non-migratable SQL gets the centralized error handling.
-- The **caller passes the domain not-found error** so business codes reach the handler; infra is
-  wrapped 500 with an `opName` for diagnostics.
+- `database.ExecuteQuerySingle(ctx, exec, q, op, dest...)` / `ExecuteQueryMany(ctx, exec, q, op,
+  scan)` / `ExecuteUpdate(ctx, exec, q, op) (int64, error)` (any count, 0 included, is not an
+  error) / `ExecuteUpdateOne(ctx, exec, q, op)` (0 rows → `ErrNoRows`, >1 → `*ExecError`) /
+  `ExecuteInsert(ctx, exec, q, op)`.
+- `database.Executor` (`Query`/`Exec`) is satisfied by both `database.Interface` and `database.Tx`
+  → the same call runs inside or outside a transaction.
+- `database.Raw(sql, args...)` adapts keep-raw SQL (UNION, CTE, hints) to the same helpers; it
+  needs the SECURITY annotation like any other raw site.
+- Errors: zero rows → wrapped `database.ErrNoRows`; infra failures → `*database.ExecError{Op,
+  Stage, Err}`. The **repository maps `database.IsNotFound(err)` to the domain not-found error** so
+  business codes reach the handler; everything else is wrapped as infra (500) with the `op` label.
 
 ### 4. Correctness details
 
@@ -1672,18 +1676,18 @@ ticket: "CEB-XXXX"
 
 ---
 
-## STEP 2 — Execute Phase by Phase (SEQUENTIAL)
+## STEP 2 — Execute Phase by Phase (stacked by default, serial when it must be)
 
 ### CRITICAL: one concern per phase — and never move on without a signal
 
 ```
-Phase 1 → PR → merge to main → user confirms ✓
+Phase 1 → PR (base: main)              → submitted (stacked) / merged (serial) ✓
                                      ↓
-Phase 2 → PR → merge to main → user confirms ✓
+Phase 2 → PR (base: phase 1 | main)    → submitted (stacked) / merged (serial) ✓
                                      ↓
   ...repeat for each phase...
                                      ↓
-Phase N (docs) → PR → merge to main → done ✓
+Phase N (docs) → PR → stack merged / merged to main → done ✓
 ```
 
 The number of phases varies per endpoint (3 to 7+). Two things never change:
@@ -1691,8 +1695,8 @@ The number of phases varies per endpoint (3 to 7+). Two things never change:
 1. **One concern per phase**, within the ≤400 prod lines / ≤10 files caps.
 2. **Never start the next phase on your own initiative.** The signal you wait for depends on
    the mode chosen at STEP 1 — see "Phase sequencing" below:
-   - **Serial** — the signal is the user confirming the previous phase **merged to main**.
-     The diagram above is this mode
+   - **Serial** — the signal is the user confirming the previous phase **merged to main**;
+     each phase branches from `main`
    - **Stacked** — the signal is the previous phase's PR being **submitted** (`gh stack
      submit`) and the user agreeing to continue. The phase is still open in review; you build
      on its branch, not on `main`
@@ -1847,7 +1851,9 @@ Before writing the first line of code in any phase, validate ALL applicable item
 │ — REPOSITORY PHASE —           │        │                       │
 │ database.Interface used        │ ✅/N/A │ never inject raw DB   │
 │ getDB func pattern             │ ✅/N/A │ func(ctx) (db, err)   │
-│ Named placeholders (:param)    │ ✅/N/A │ Oracle = :name        │
+│ Positional placeholders        │ ✅/N/A │ Oracle :1..n, PG $N   │
+│ Raw/Expr sites annotated       │ ✅/N/A │ // SECURITY: Manual…  │
+│ database.Execute* helpers      │ ✅/N/A │ IsNotFound → domain   │
 │ fixtures.NewMockRows for tests │ ✅/N/A │ not custom mock rows  │
 │ mocks.MockDatabase for tests   │ ✅/N/A │ &mocks.MockDatabase{} │
 │ mocks.MockTx if transactional  │ ✅/N/A │ from go-bricks/testing│
@@ -1872,6 +1878,8 @@ Before writing the first line of code in any phase, validate ALL applicable item
 │ Existing helpers reused        │ ✅/N/A │ cardutils, external/* │
 │ No duplicate of existing code  │ ✅/N/A │ extend before add     │
 │ Config in both yml + yaml      │ ✅/N/A │ env vars + local vals │
+│ New PAN/CVV/expiry/token fields│ ✅/N/A │ log.sensitivefields or│
+│   masked in logs               │        │ RedactedForLog()      │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1933,10 +1941,13 @@ Before writing the first line of code in any phase, validate ALL applicable item
    s ERR-SWALLOWED    '_ = .*[Ee]rr|fmt\.Errorf\([^)]*%v[^)]*err'
    s IDIOM-BLOCKER    'panic\(|os\.Exit|log\.Fatal|^func init\(\)'
    s TIME-AS-INT      '(Timeout|TTL|Interval|Delay|ExpiresIn) +(int|int64|string)'
+   s RAW-NO-SECURITY  'f\.Raw\(|jf\.Raw\(|database\.Raw\(|SetExpr\(|Having\(|MustExpr\(|[.]Expr\(|RawExpression\{'
    cat $OUT
    ```
    Every hit is **opened and read** before it is dismissed — the sweep locates, it never
-   concludes. A legitimate hit gets a one-line justification in the PR body so the reviewer
+   concludes. Each `RAW-NO-SECURITY` hit must carry
+   `// SECURITY: Manual SQL review completed - <what was verified>` on the line above it; a hit
+   without it is fixed in this phase. A legitimate hit gets a one-line justification in the PR body so the reviewer
    does not re-litigate it (review check 18b honors prior justifications; an unexplained
    escape hatch gets flagged again).
 
@@ -2039,7 +2050,7 @@ the mapping stays traceable instead of duplicated.
 | 4 | **Reuse the shared reader before writing a repository** (Rule 0 below). Extend the shared query and DTO when a column is missing | A parallel stack — Row, scanColumns, mapper, DTO, interface — all of it well-built and all of it duplicate | 8a |
 | 5 | **Use the shared module bootstrap.** Do not copy another module's `Init` block | Six identical error strings; the module that skips it loses telemetry silently | 20c |
 | 6 | **Bus contract names come from the counterpart, copy-pasted, never retyped.** Exchange, queue, routing key and `EventType` must match the other side character for character | Publishes fine, routes nowhere, no error anywhere. The most expensive defect this repo can ship | 6b |
-| 7 | **QueryBuilder, always — raw SQL only when the builder truly cannot express it.** `fmt.Sprintf` into SQL is a blocker, not a shortcut, even for a one-off admin query. `RawExpression` (`qb.Expr`/`MustExpr`) only splices inline in SELECT/GROUP BY/ORDER BY — in INSERT VALUES / UPDATE SET it is bound as a parameter instead, so the **only** legitimate raw-SQL holdouts are: an Oracle sequence/function in VALUES or SET (`SEQ.NEXTVAL`, `SYSDATE`), `NVL()`/`\|\|` (or any function) directly inside a SET target, and a correlated scalar subquery inside SET (no clean builder form outside a SELECT projection). Every other statement — a plain SELECT/INSERT/UPDATE with only bound values, even a `ROWNUM = 1` guard (`f.Raw("ROWNUM = 1")`) — goes through `qb.Select/Insert/Update`. Document each holdout inline with the specific construct forcing it, not a blanket "stays raw" comment over the whole file | Security finding on a merged branch, or a phase later needing to retrofit builder calls one query at a time | 1b, 4b |
+| 7 | **QueryBuilder, always — raw SQL only when the builder truly cannot express it.** `fmt.Sprintf` into SQL is a blocker, not a shortcut, even for a one-off admin query. `RawExpression` (`qb.Expr`/`MustExpr`) is spliced inline in INSERT VALUES / UPDATE SET (`Set`/`SetMap`/`SetExpr`/`Values`/`BuildUpsert`), so `SEQ.NEXTVAL`, `SYSDATE`, `NVL()`/`\|\|` in a SET target and a correlated scalar subquery in SET all go through `qb.Insert/Update` with `qb.Expr` (confirm with `ToSQL()`). The **only** legitimate raw-SQL holdouts (`database.Raw`) are `UNION`, `WITH`/CTE and optimizer hints. Every other statement — even a `ROWNUM = 1` guard (`f.Raw("ROWNUM = 1")`) — goes through `qb.Select/Insert/Update`. Every `f.Raw`/`jf.Raw`/`database.Raw`/`SetExpr`/string `Having`/`qb.Expr`/`MustExpr`/`RawExpression{}` site carries `// SECURITY: Manual SQL review completed - <what was verified>` on the line above, not a blanket "stays raw" comment over the whole file | Security finding on a merged branch, or a phase later needing to retrofit builder calls one query at a time | 1b, 4b |
 
 ### Design decisions taken once, at STEP 0 — not discovered in review
 
@@ -2154,10 +2165,19 @@ changes WHICH error wins or its precedence, that IS a 🔴 divergence.
 |------|---------|
 | **getDB func pattern** | Never inject raw DB |
 | **SQL in queries.go** | Never inline SQL |
-| **Named placeholders** | `:param` Oracle, `$N` PostgreSQL |
+| **Positional placeholders** | builder generates `:1..n` Oracle, `$N` PostgreSQL; `database.Raw(sql, args...)` takes positional args |
 | **External clients in shared pkg** | Not in service/ |
 | **Filtering in SQL** | Never in-memory |
 | **Config in both files** | Env placeholders + local values |
+
+### Security
+
+| Rule | Details |
+|------|---------|
+| **New PAN/CVV/expiry/cardToken fields masked in logs** | Add the field names to `log.sensitivefields` (YAML, additive to the defaults — bare `pan`/`card` are not default needles) or implement `RedactedForLog() any` (`logger.Redactor`, ADR-110, value receiver) on the DTO |
+| **Never log the decrypted request** | Do not pass the decrypted request/DTO to `logger.Interface`/`WithFields` unless it implements `logger.Redactor` |
+| **`LoggerFilterConfig` in code** | `app.Options.LoggerFilterConfig` replaces the whole config — start from `logger.DefaultFilterConfig()` and append, never a bare struct literal |
+| **Raw SQL annotation** | `// SECURITY: Manual SQL review completed - <what was verified>` above every raw/Expr site (see "When a query CANNOT use the builder") |
 
 ### Tenant Config Sections
 
@@ -2201,10 +2221,15 @@ declare `params`.
 ### Compensation Pattern
 
 When external call succeeds but DB write fails:
-1. Best-effort compensation call to reverse
+1. Best-effort compensation call to reverse — on `context.WithoutCancel(ctx)` (keeps trace/tenant
+   values; the request ctx is already cancelled if the failure was a timeout), never
+   `context.Background()`
 2. Log attempt
 3. Return original error
 4. Test both: compensation succeeds + fails
+
+If the side effect is **publishing an event** (not an HTTP call), don't compensate: write it with
+the go-bricks outbox in the same DB transaction (`outbox.Publish(ctx, tx, …)` before `tx.Commit`).
 
 ---
 
@@ -2270,12 +2295,18 @@ Cover: success, each business error code → HTTP status, service 500, service 5
 ### Plain body
 
 ```go
-func (m *Handler) Foo(req *service.FooRequest, ctx server.HandlerContext) (interface{}, server.IAPIError) {
-    resp, appErr := m.Service.Foo(ctx.Echo.Request().Context(), req)
-    if apiErr := m.ValidateError(appErr); apiErr != nil { return nil, apiErr }
+func (m *Handler) Foo(req *service.FooRequest, ctx server.HandlerContext) (server.Result[*service.FooResponse], server.IAPIError) {
+    resp, appErr := m.Service.Foo(ctx.RequestContext(), req)
+    if apiErr := m.ValidateError(appErr); apiErr != nil { return server.Result[*service.FooResponse]{}, apiErr }
     return server.NewResult(HTTPStatusFromRC(resp.Rc), resp), nil
 }
 ```
+- `ctx.Echo` no longer exists (ADR-034 — no `echo.*` on the consumer surface): use
+  `ctx.RequestContext()` / `ctx.Request()`.
+- The legacy contract has no `data`/`meta` envelope → register the route with
+  `server.WithRawResponse()` (Raw Response Mode, go-bricks `wiki/handler_patterns.md`) so the
+  handler's `R` is serialized as-is. `server.ResultWithMeta[R]` is only for adding entries to the
+  enveloped `meta` map (it is dropped in raw mode).
 
 ### Encrypted body (pure module)
 
@@ -2387,9 +2418,6 @@ A title over 72 chars (e.g. ~120) is a nit, not a blocker — but trim scope wor
 
 **Body:**
 
-## Jira
-[{TICKET}](https://{ticket_host}/browse/{TICKET})
-
 ## Summary
 - Bullet 1
 - Bump version X → Y
@@ -2429,7 +2457,7 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | Retype a bus exchange/queue/routing key | Copy-paste from the counterpart (review 6b) |
 | Hand-copy a sibling flow | Parameterize a descriptor (review 20a) |
 | `fmt.Sprintf` into SQL "just this once" | QueryBuilder — it is a blocker (review 1b) |
-| "this statement stays raw" as a blanket comment over a whole query file | Convert every query that has no NEXTVAL/SYSDATE/NVL/\|\|/correlated-subquery in VALUES or SET; document only the true holdouts, one by one |
+| "this statement stays raw" as a blanket comment over a whole query file | Convert every query that is not UNION/CTE/hint (NEXTVAL/SYSDATE/NVL/\|\|/correlated subquery in VALUES or SET use `qb.Expr`); annotate each remaining raw/Expr site with its own `// SECURITY: Manual SQL review completed - …` line |
 | Open the PR with a known blocker | Fail closed: fix it in the phase (self-review gate) |
 | Start the next phase because the previous "looks done" | Wait for the mode's signal: merge (serial) or submitted PR + user go-ahead (stacked) |
 | Report a stacked phase as `merged` when it is only submitted | `en review` until the stack actually lands |

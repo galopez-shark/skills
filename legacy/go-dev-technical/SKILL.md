@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.16.0"
+  version: "2.17.0"
   domain: review
   triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -314,11 +314,25 @@ what is broken** — then reason about what the toolchain cannot see. See
    to lift the coverage %. A PR that hides 400 lines of tautological coverage-padding
    under the "tests don't count" rule fails check 15 (test quality). Tests earn their
    exclusion by pinning a business contract; coverage-only tests do not.
-2. **Title**: Conventional Commit, ≤72 chars, no Jira ID in title
-3. **Security & PCI**: no secrets, PAN, CVV in code/logs/tests; tenant isolation
+2. **Title** (NIT — never blocks): `type: descripción` in lowercase, type one of
+   `feat`/`fix`/`hotfix`/`docs`/`test`/`refactor`, ≤72 chars, **no Jira ID in the title** —
+   the ticket goes in the body as `Refs: <TICKET>`
+3. **Security & PCI**: no secrets, PAN, CVV in code/logs/tests; tenant isolation. Logs are a
+   PCI sink too — the go-bricks `SensitiveDataFilter` masks by **field name** only, so check
+   (sweep section `LOG-PCI`):
+   - **BLOCKER** — a new PAN / CVV / expiration / `cardToken`-like field that reaches a log with
+     neither an entry in `log.sensitivefields` (YAML, additive) nor a `RedactedForLog() any`
+     method (`logger.Redactor`, ADR-110, value receiver). Bare `pan`/`card` are **not** default
+     needles, so `cardNumber`, `pan_value`, `cardToken` log in clear until added
+   - **BLOCKER** — a decrypted request/response (JOSE/JWE body, `data` after unwrap), an
+     `auth.Principal`, or a recovered panic value passed to `logger.Interface` / `WithFields`:
+     the reflective path bypasses the type's redaction and has no needle to match
+   - **BLOCKER** — `recover()` rendering the value with `%v`/`%s`/`%q`/`%+v` (or `Msgf`,
+     `Interface(…, r)`, `fmt.Errorf("…%v", r)`) instead of the type with `%T` (ADR-081). A bare
+     `panic(req)` carries the payload; only its type is safe to log or to turn into an error
 4. **Correctness**: edge cases, error paths, money math (integer minor units)
 5. **Contracts**: API compatibility, response codes, DB migration safety
-6. **Tests**: ≥70% coverage on changed code, error paths covered
+6. **Tests**: coverage on changed code — **floor 70%, goal 85%** — error paths covered
 7. **Style**: defer to linters (golangci-lint, gofmt, staticcheck)
 
 ### Phase 2 — go-bricks validation (checks 1-10)
@@ -502,7 +516,9 @@ s(){ printf '\n##### %s\n' "$1" >> $OUT; shift; grep -rnE "$@" $SCOPE --include=
 
 # --- BLOCKERS first: fail fast on the things that must never merge ---
 s SQL-INJECTION      'fmt\.(Sprintf|Fprintf)\(.*(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)|"[^"]*(SELECT|WHERE)[^"]*" *\+|strings\.(Replace|ReplaceAll)\(.*(SELECT|WHERE)'
-s SQL-RAW-ESCAPE     '\.(Raw|Expr|MustExpr)\('
+s SQL-RAW-ESCAPE     'f\.Raw\(|jf\.Raw\(|database\.Raw\(|SetExpr\(|Having\(|MustExpr\(|[.]Expr\(|RawExpression\{'
+s LOG-PCI            'recover\(\)|\.Interface\(|WithFields\(|Msgf\(.*%[vsq]|(pan|cvv|cvc|expir|cardToken|cardNumber)[A-Za-z_]* *[:=]'
+s CTX-DETACH         'context\.Background\(\)|context\.TODO\(\)|WithoutCancel\('
 s STORED-PROC        'CALL |EXECUTE |BEGIN.*END;|[a-z_]+\.[a-z_]+\.[a-z_]+\('
 s REINVENTED-TYPES   'sql\.(DB|Open|Conn)|http\.(Client|Get|Post)\{?|echo\.Context|log\.(Printf|Println)|fmt\.Print'
 s LAYER-BREAK        'modules/[a-z_]+/service/.*"(net/http|github.com/labstack)|modules/[a-z_]+/handlers/.*/database"'
@@ -556,6 +572,15 @@ grep -rn "http\.Client\|http\.Get\|http\.Post\|http\.NewRequest" <changed-files>
 
 # Raw echo context (should use server.HandlerContext)
 grep -rn "echo\.Context" <changed-files>/handlers/ --include="*.go" | grep -v _test.go
+
+# echo.* on the app's public surface, or the removed ctx.Echo field (ADR-034) —
+# request access goes through ctx.RequestContext() / ctx.Request() / ctx.PathParams()
+grep -rnE "ctx\.Echo\b|\.Echo\.|\*echo\.Echo|echo\.(MiddlewareFunc|HandlerFunc)" <changed-files> --include="*.go" | grep -v _test.go
+
+# Home-made Execute helpers (ToSQL → Query/Exec → Scan/RowsAffected → wrap) — go-bricks ≥ v0.55
+# ships database.ExecuteQuerySingle / ExecuteQueryMany / ExecuteUpdate / ExecuteUpdateOne /
+# ExecuteInsert, plus database.Raw(sql, args...) for hand-written SQL
+grep -rnE "func (\([^)]*\) )?(execute|exec|query|run)[A-Z]?[A-Za-z]*\(ctx context\.Context, .*(ToSQL|sql string|query string)" <changed-files> --include="*.go" | grep -v _test.go
 
 # Raw fmt/log (should use logger.Logger via zerolog)
 grep -rn "log\.Printf\|log\.Println\|fmt\.Printf\|fmt\.Println" <changed-files> --include="*.go" | grep -v _test.go
@@ -626,7 +651,7 @@ For every `Raw()` / `Expr()` / `MustExpr()` hit, verify:
 
 **The rule underneath all three tiers:** raw SQL is an escape hatch from the *builder*,
 **never** from parameterization. A statement the builder genuinely cannot express is still
-fully bound — `:param` / `$N` / `sql.Named` — for every value. "It had to be raw" justifies
+fully bound — `:1..:n` (Oracle) / `$N` (PostgreSQL) — for every value. "It had to be raw" justifies
 the raw string; it never justifies an interpolated value.
 
 **Arguments that are NOT justifications**, and are rejected without further discussion:
@@ -675,7 +700,7 @@ list grows with every release:
 | Paging, `ROWNUM` tricks | `Limit` · `Offset` · `Paginate(limit, offset)` | **not justified** |
 | Row locking | `ForUpdate` · `ForUpdateNoWait` | **not justified** |
 | Conditions | `Eq` `NotEq` `Gt` `Gte` `Lt` `Lte` `Between` `In` `NotIn` `Null` `NotNull` `Regex` `RegexI` `NotRegex` `NotRegexI` `And` `Or` `Not` `Raw` | **not justified** |
-| DB-side expression in `UPDATE SET` | `SetExpr(col, expr, args…)` **exists, but verify with `ToSQL()`** — a `RawExpression` splices inline in SELECT/GROUP BY/ORDER BY and is *bound* in `VALUES`/`SET`, so confirm before ruling either way | **verify, then decide** |
+| DB-side expression in `UPDATE SET` / `INSERT VALUES` / upsert | **go-bricks ≥ v0.62**: a `RawExpression` (`qb.Expr`/`MustExpr`) is **spliced inline** (no placeholder, no arg) in `Set`, `SetMap`, `Values` (≥ v0.62) and both `BuildUpsert` maps (≥ v0.72); `SetExpr(col, expr, args…)` (≥ v0.63) when the expression binds a value. Below those versions it was bound as a parameter — check `go.mod` | **not justified** on a version that splices it |
 | Vendor timestamp / UUID | `BuildCurrentTimestamp()` · `BuildUUIDGeneration()` — vendor-aware, no hardcoded `SYSDATE` | **not justified** |
 | Upsert | `BuildUpsert(table, conflictCols, insertCols, updateCols)` | **not justified** |
 | `INSERT … SELECT` | `Insert(...).Select(selectBuilder)` | **not justified** |
@@ -686,10 +711,10 @@ list grows with every release:
 **Genuinely absent in v0.63.0** — the closed set of accepted reasons for a raw `const`:
 
 - `UNION`, `WITH` / CTE, and vendor optimizer hints
-- A DB-side **function or sequence in `INSERT VALUES` / `UPDATE SET`** (`SEQ.NEXTVAL`,
-  `SYSDATE`, `NVL()`, `||`), and a **correlated scalar subquery inside `SET`** — because a
-  `RawExpression` splices inline only in SELECT / GROUP BY / ORDER BY and is *bound* as a
-  parameter in the value positions, turning a function there into a broken bind
+- **Only on go-bricks < v0.62**: a DB-side **function or sequence in `INSERT VALUES` /
+  `UPDATE SET`** (`SEQ.NEXTVAL`, `SYSDATE`, `NVL()`, `||`) — those versions *bound* a
+  `RawExpression` in value positions. From v0.62 `Set(col, qb.MustExpr("SYSDATE"))` /
+  `Values(…, qb.MustExpr("SEQ.NEXTVAL"))` render inline, so this is no longer a reason
 - Stored procedures are absent too, but **check 1d bans them outright** — a proc is never a
   justification, it is a separate blocker
 
@@ -709,10 +734,14 @@ holdout is documented individually with the specific construct forcing it.
    is ground truth — and a `RawExpression` that silently became a bind parameter shows up
    there and nowhere else
 
-**One caveat, stated honestly:** `Values(values ...any)` on the insert builder takes `any`,
-so whether a `RawExpression` survives as an expression or silently becomes a bind must be
-confirmed with `ToSQL()` for that specific case. `UPDATE SET` has the explicit `SetExpr`
-path and needs no such doubt.
+**The inverse trap — `qb.Expr` is NOT a parameter (BLOCKER).** On a version that splices it
+(table above), whatever the expression body contains goes **into the statement text** — in
+`Select`/`GroupBy`/`OrderBy`/`Having`, in the `jf.*` value doors, and in
+`Set`/`SetMap`/`SetExpr`/`Values`/`BuildUpsert`. Code that treats
+`Set(col, qb.MustExpr(userValue))` or `qb.Expr(fmt.Sprintf(…, input))` as if the value were
+bound is an injection vector. A value always travels in `args` (`SetExpr(col, expr, args…)`,
+`f.Raw(cond, args…)`), never inside the `Expr` body. When unsure which version the module is
+on, ask for the `ToSQL()` output — it is ground truth.
 
 #### Tier 2 — SHOULD-FIX (unnecessary escape hatch)
 
@@ -724,10 +753,33 @@ grep -rn "const.*=.*\"SELECT\|const.*=.*\"INSERT\|const.*=.*\"UPDATE" <path>/rep
 
 For each, compare against QueryBuilder capabilities (see decision tree below).
 
-#### Tier 3 — NIT (missing documentation)
+#### Tier 3 — Missing `// SECURITY:` annotation (HIGH — treat as BLOCKER)
 
-Every `Raw()` / `Expr()` / raw SQL `const` SHOULD have a comment explaining WHY
-the QueryBuilder cannot express the query. Missing comment = NIT.
+go-bricks' Security First rule: **every** raw-SQL door — `f.Raw()`, `jf.Raw()`,
+`database.Raw()`, an UPDATE `SetExpr()`, a **string** predicate passed to `Having()`, and every
+`RawExpression` body (`qb.Expr()`, `qb.MustExpr()`, a `RawExpression{}` literal) — carries,
+on the line above (or above an enclosing dispatch when the property is uniform):
+
+```go
+// SECURITY: Manual SQL review completed - <what was verified: identifier quoting,
+// value-side parameterization, no user-input concatenation>
+```
+
+`RawExpression.Validate()` never inspects the SQL body, so the annotation is the only audit
+trail. Run the framework's grep **on the diff** and check the line above each added hit:
+
+```bash
+git diff origin/main...pr-<N> -U1 -- '*.go' ':(exclude)*_test.go' \
+  | grep -nE 'f\.Raw\(|jf\.Raw\(|database\.Raw\(|SetExpr\(|Having\(|MustExpr\(|[.]Expr\(|RawExpression\{' -B1
+# repo-wide equivalent (what go-bricks itself runs):
+git grep -nE 'f\.Raw\(|jf\.Raw\(|database\.Raw\(|SetExpr\(|Having\(|MustExpr\(|[.]Expr\(|RawExpression\{'
+```
+
+An added/modified hit with no `// SECURITY: Manual SQL review completed - …` above it =
+finding, severity **high** (fix is one line; a vague rationale like "reviewed" does not count —
+it must name the property checked). `Having(qb.MustExpr(...))` is still an `Expr` hit.
+Independently, a raw SQL `const` with no comment saying WHY the builder cannot express it
+stays a NIT.
 
 #### go-bricks QueryBuilder: the safe default
 
@@ -742,24 +794,30 @@ the QueryBuilder cannot express the query. Missing comment = NIT.
 | Table aliases | `dbtypes.MustTable(name).MustAs("alias")` | — |
 | Pagination | `Paginate(page, size)` | — |
 | Subqueries | `f.Exists(subquery)`, `f.InSubquery(col, subquery)` | — |
-| UNION / CTE / PL/SQL | — (not supported) | Raw SQL `const` + `sql.Named()` |
+| UNION / CTE | — (not supported) | `database.Raw(sql, args…)` + `database.Execute*`, positional binds |
 
-**Safe usage of Raw() (when builder can't express it):**
+**Safe usage of Raw() (when builder can't express it)** — every call carries its
+`// SECURITY:` line (Tier 3):
 ```go
-// GOOD: Raw() with parameterized args — values never in SQL string
+// GOOD: Raw() with parameterized args — values never in SQL string. `?` here is
+// renumbered by the builder into the vendor's format (:1 / $1)
+// SECURITY: Manual SQL review completed - static condition, value bound via args
 f.Raw("UPPER(name) = ?", nameValue)
-f.Raw("ST_Distance(location, ?) < 1000", point)
+// SECURITY: Manual SQL review completed - static join predicate, literal bound via args
 jf.Raw("users.id = profiles.user_id AND profiles.type = ?", "primary")
 
-// GOOD: Expr() for static SQL expressions (no user input)
+// GOOD: Expr() for static SQL expressions (no user input — the body is spliced, not bound)
+// SECURITY: Manual SQL review completed - constant aggregate, no input
 qb.Expr("COUNT(*)", "total")
-qb.MustExpr("TO_CHAR(created_at, 'YYYY-MM-DD')", "date_str")
 
-// GOOD: raw const for UNION (builder doesn't support it)
-// QueryBuilder does not support UNION — raw SQL with named params
-const queryUnion = `SELECT id FROM active_users WHERE status = :status
+// GOOD: UNION via database.Raw — the SQL reaches the driver VERBATIM (no renumbering), so
+// write the vendor's placeholders yourself. Oracle: positional :1..:n, one arg per
+// placeholder in order (not :name / sql.Named). PostgreSQL: $1..$n
+// SECURITY: Manual SQL review completed - QueryBuilder has no UNION; static SQL, values via args
+q := database.Raw(`SELECT id FROM active_users WHERE status = :1
 UNION ALL
-SELECT id FROM archived_users WHERE status = :status`
+SELECT id FROM archived_users WHERE status = :2`, status, status)
+err := database.ExecuteQueryMany(ctx, db, q, "active_or_archived", scanFn)
 ```
 
 **GOOD (safe with go-bricks QueryBuilder):**
@@ -806,8 +864,9 @@ Is the query expressible with QueryBuilder?
     │         ALL dynamic values as args (placeholders, never in SQL string)
     │         + comment: WHY builder can't express it
     └── NO → Is it UNION/CTE/PL/SQL/DDL?
-        ├── YES → Raw SQL const + sql.Named() for params
-        │         + comment: "QueryBuilder does not support X"
+        ├── YES → database.Raw(sql, args...) + database.Execute* — positional binds
+        │         (Oracle :1..:n, PostgreSQL $1..$n), values only in args
+        │         + // SECURITY: Manual SQL review completed - QueryBuilder does not support X
         └── NO → Builder probably CAN express it — try harder
 ```
 
@@ -962,7 +1021,22 @@ When the diff touches repository code:
 
 - [ ] Uses `database.Interface` (injected), never creates DB connections
 - [ ] SQL queries in `queries.go` as `const`, not inline strings
-- [ ] Named placeholders for Oracle (`:param_name`), not Postgres-style positional (`$1`)
+- [ ] Hand-written SQL (`database.Raw`) on Oracle uses **positional `:1..:n`** — one arg per
+      placeholder, in order — the go-bricks convention (the builder renders `:1`, and
+      `database.Raw` passes the SQL verbatim, nothing renumbers it). Not `:param_name` /
+      `sql.Named`, and not PostgreSQL `$1`
+- [ ] Repository glue (`ToSQL` → `Query`/`Exec` → `Scan`/`RowsAffected` → wrap) uses
+      `database.ExecuteQuerySingle` / `ExecuteQueryMany` / `ExecuteUpdate` / `ExecuteUpdateOne` /
+      `ExecuteInsert` (go-bricks ≥ v0.55), not a home-made `execute*` helper; `errors.Is(err,
+      database.ErrNoRows)` for the business 404
+- [ ] **Oracle time parity — the session runs in UTC** (`database.timezone` defaults to `UTC`,
+      ADR-016, applied per connection). `CURRENT_DATE` / `CURRENT_TIMESTAMP` / `LOCALTIMESTAMP`
+      and `TIMESTAMP WITH LOCAL TIME ZONE` conversions now answer in UTC, while `SYSDATE` /
+      `SYSTIMESTAMP` (and `BuildCurrentTimestamp()`, which emits `SYSDATE` on Oracle) follow the
+      DB server's OS clock. A query mixing both, or a legacy Java flow that assumed local time
+      (cut-off hours, "today" filters, `TRUNC(SYSDATE)` vs a bound `time.Now()`), drifts by the
+      UTC offset. Verify parity, or set `database.timezone` to an explicit IANA zone (`-` = server
+      default) and say why
 - [ ] `fixtures.NewMockRows` for test data, not custom mock structs
 - [ ] `mocks.MockDatabase` / `mocks.MockTx` for DB mocks in tests
 - [ ] No `sql.NullString` in domain types — convert at the repository boundary
@@ -1128,7 +1202,7 @@ Reference: zinli `auth/repository` `GetToken` builds a 3-table INNER JOIN with a
 | Query shape | How to build it |
 |-------------|-----------------|
 | Single-table CRUD, **or** JOINs (INNER/LEFT/RIGHT), CASE, functions, ORDER BY, pagination | **QueryBuilder + `Entity[T]`** — the default |
-| Set operations with no native builder support (`UNION [ALL]`, recursive CTE, vendor PL/SQL) | **Raw SQL `const` + `sql.Named`** — documented as the exception |
+| Set operations with no native builder support (`UNION [ALL]`, recursive CTE) | **`database.Raw` + positional binds** (`:1..:n` on Oracle) + `// SECURITY:` annotation — documented as the exception |
 
 **DO flag (SHOULD-FIX):**
 - A JOIN query hand-written as a raw `const` when the builder can express it →
@@ -1220,6 +1294,10 @@ A single wrong character = an integration that never works.
       queue or exchange that was never declared. Verify the module actually declares
       **all four**: exchange, queue, binding, and the consumer/publisher. A consumer
       declared without its binding compiles, starts, and receives nothing
+- [ ] **An exchange owned by another service is referenced, never declared**:
+      `decls.DeclareExternalExchange(name)` (go-bricks ≥ v0.67, ADR-119) — passive declare,
+      existence only, never created. A `DeclareTopicExchange` of someone else's exchange races
+      the owner's shape (type/flags/args) and fails startup — or worse, wins
 
 #### 6b.2 Delivery guarantees (BLOCKER)
 
@@ -1228,20 +1306,30 @@ A single wrong character = an integration that never works.
       message permanently** — no retry, no DLQ, no trace
 - [ ] **`Durable: true`** on queues and exchanges that carry business events —
       otherwise a broker restart discards them
-- [ ] **DLQ configured**: `QueueDeclaration.Args` carries `x-dead-letter-exchange`
-      (and its DLX/DLQ are themselves declared). Without it, a poison message either
-      loops forever or vanishes
+- [ ] **DLQ configured**: go-bricks nacks **without requeue** on every handler error or
+      panic, so a queue with no dead-letter route **drops** the failed message. Use
+      `decls.DeclareQueueWithDLQ(name, spec)` (go-bricks ≥ v0.53) — it declares the full
+      DLX + DLQ + binding route; raw `Args["x-dead-letter-exchange"]` is the custom-topology
+      escape hatch and parks only when exchange + queue + binding are all declared (`Validate()`
+      refuses a route that cannot park). A DLX owned by another service →
+      `DeclareExternalExchange`
 - [ ] **No infinite requeue**: a handler that nacks with `requeue=true` on a
       permanent error (malformed payload, unknown id) re-delivers the same message
       forever and burns the consumer. Permanent errors go to the DLQ; only transient
       ones requeue
 - [ ] **Idempotent consumer**: AMQP is **at-least-once**, so redelivery is normal,
       not exceptional. The handler either wraps in `deps.Inbox.ProcessOnce` (with the
-      id from `outbox.EventIDFromHeaders`) or is provably idempotent by construction.
-      A consumer that inserts a row without an idempotency key WILL duplicate it
+      id from the `x-outbox-event-id` header via `outbox.EventIDFromHeaders`) or is provably
+      idempotent by construction. A consumer that inserts a row without an idempotency key
+      WILL duplicate it
 - [ ] **No dual write**: publishing inside a DB transaction that may still roll back
       (or committing then publishing) loses or invents events on any crash between
-      the two. Use the transactional **outbox** — that is what it is for
+      the two. Use the transactional **outbox** — `s.outbox.Publish(ctx, tx, &app.OutboxEvent{…})`
+      before `tx.Commit` — that is what it is for. Same defect, different spelling: a direct
+      publish "protected" by an HTTP compensation/reversal call if it fails — the
+      compensation is itself a second write that can fail, so the effect is still dual-write.
+      Choose the exit by the effect: **state change + event → outbox in the same tx**;
+      **synchronous external call → compensation** (see 12b for its context)
 
 #### 6b.3 Payload contract
 
@@ -1264,7 +1352,9 @@ A single wrong character = an integration that never works.
 - [ ] `Workers` / `PrefetchCount` are deliberate: `0` means auto (`NumCPU*4`, prefetch
       `Workers*10` capped at 500). For a handler that writes to a DB with a small
       pool, auto-scaling to 4×CPU workers exhausts the pool — set both explicitly and
-      say why
+      say why. **Does order matter?** (per-account state machine, ledger postings, status
+      transitions) → `Workers: 1` explicitly; the default processes deliveries concurrently
+      and reorders them silently
 - [ ] Uses go-bricks `messaging` (`Registry` / `Declarations` / `AMQPClient`), never
       `amqp091-go` directly:
       ```bash
@@ -2004,6 +2094,14 @@ waits. Check these explicitly:
       `cancel(err)` + `context.Cause(ctx)` (Go 1.20+), and `WithTimeoutCause` for deadlines.
       **On a money path this is a real finding, not a nit** — "did it fail or was it cancelled, and
       by what?" is exactly the question an in-doubt transaction has to answer
+- [ ] **Compensation / reversal born cancelled (BLOCKER on a money path)**: a reversal,
+      rollback call or compensating HTTP request issued with the **request `ctx`** after a
+      timeout inherits the expired deadline and fails instantly — the debit stands, the
+      reversal never leaves. With `context.Background()` / `TODO()` it runs, but loses the
+      trace ID, tenant ID and logger fields, so the reversal is unattributable (and, multi-tenant, a
+      tenant-scoped `deps.DB(ctx)` cannot resolve). Use `context.WithoutCancel(ctx)` (keeps the
+      values, sheds the cancellation), optionally bounded with its own
+      `context.WithTimeout`. Sweep section `CTX-DETACH`
 - [ ] **`errgroup`**: `g.Wait()` is actually called and its error is checked; the
       group is created with `errgroup.WithContext` when siblings must cancel
 
@@ -3057,14 +3155,14 @@ go-bricks type names stay in English (they are code).
 ### The report template lives in `references/`
 
 The full GFM template — header, the four finding sections, the rawQuery audit table, the
-42-row validation table, and the naming / design tables — is in
+45-row validation table, and the naming / design tables — is in
 **[`references/report-template.md`](references/report-template.md)**. Read it **when you are
 ready to write the report**, not before: nothing in Phases 0-5 depends on it, and loading it
 early only costs context.
 
 There is **one** template, written in Spanish. For `LANG=EN` or any other language,
 translate its labels with **[`references/report-glossary.md`](references/report-glossary.md)**
-(45 label pairs) and write the prose in the target language.
+(48 label pairs) and write the prose in the target language.
 
 Why one and not one per language: two hand-synced templates are exactly the check 20b
 violation this skill reports in other people's code — parallel structures with nothing
