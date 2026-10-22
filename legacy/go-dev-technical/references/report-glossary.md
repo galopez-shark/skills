@@ -21,6 +21,9 @@ go-bricks type names and status glyphs are never translated.
 | **Base de evidencia (Phase 0)** | **Evidence base (Phase 0)** | fila |
 | Modernización (`go fix -diff`) | Modernization (`go fix -diff`) | fila |
 | Sin tipos reinventados | No reinvented types | fila |
+| `// SECURITY: Manual SQL review completed` en cada door raw-SQL | `// SECURITY: Manual SQL review completed` on every raw-SQL door | fila |
+| Logs PCI (PAN/CVV/exp/token, `Principal`, panic por `%T`) | PCI-safe logs (PAN/CVV/exp/token, `Principal`, panic by `%T`) | fila |
+| Compensación/reverso con `context.WithoutCancel(ctx)` | Compensation/reversal on `context.WithoutCancel(ctx)` | fila |
 | Sin llamados a stored procedures | No stored procedure calls | fila |
 | Límites de capa correctos | Layer boundaries | fila |
 | Cableado de módulo | Module wiring | fila |

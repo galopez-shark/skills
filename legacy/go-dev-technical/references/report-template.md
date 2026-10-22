@@ -129,6 +129,8 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | **go-bricks** | | |
 | Sin tipos reinventados | ✅/❌/⚠️ | |
 | rawQuery / SQL safety | ✅/❌/⚠️ | |
+| `// SECURITY: Manual SQL review completed` en cada door raw-SQL | ✅/❌/N/A | {N} hits en el diff / {M} sin anotar |
+| Logs PCI (PAN/CVV/exp/token, `Principal`, panic por `%T`) | ✅/❌/⚠️ | |
 | Sin llamados a stored procedures | ✅/❌ | BLOCKER si hay SP |
 | Límites de capa correctos | ✅/❌/⚠️ | |
 | Cableado de módulo | ✅/N/A | |
@@ -151,6 +153,7 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 | **Bugs & code smells** | | |
 | Manejo de errores | ✅/❌/⚠️ | |
 | Sin bugs de concurrencia | ✅/N/A | |
+| Compensación/reverso con `context.WithoutCancel(ctx)` | ✅/❌/N/A | |
 | Sin resource leaks | ✅/❌/⚠️ | |
 | Fail-closed en fallos | ✅/N/A | |
 | Calidad de tests | ✅/❌/⚠️ | |
