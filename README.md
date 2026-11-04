@@ -9,7 +9,7 @@ and for validating the Go that comes out of it.
 |-------|---------|
 | [`novo-legacy-migration-context`](legacy/novo-legacy-migration-context/SKILL.md) | Initializes `.migration-context.yaml`: source repos, properties, DB, auth, external services, full endpoint inventory, and Jira ticket generation. |
 | [`novo-legacy-migration-endpoint`](legacy/novo-legacy-migration-endpoint/SKILL.md) | Migrates a single endpoint to Go phase-by-phase (`list`, `roadmap`, `status`, and the full domain → repository → service → handler → docs flow). Built on go-bricks. |
-| [`go-dev-technical`](legacy/go-dev-technical/SKILL.md) | Technical validator for go-bricks services. `review <PR_URL>` runs the toolchain (build / vet / test -cover / golangci-lint / go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, bus contracts, runtime bugs and naming. `scan <path>` audits a codebase and emits a phased remediation roadmap sized to the merge caps. |
+| [`go-dev-technical`](legacy/go-dev-technical/SKILL.md) | Technical validator for go-bricks services. `review <PR_URL>` runs the toolchain (build / vet / test -cover / golangci-lint / go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, bus contracts, runtime bugs and naming. `scan <path>` audits a codebase and emits a phased remediation roadmap sized to the merge caps. `pr-fix [PR]` attends CodeRabbit / reviewer / CI feedback on a PR: validates each comment with you, fixes in a separate commit, waits for green CI, replies/resolves in English and re-requests review. |
 
 ## Install
 
