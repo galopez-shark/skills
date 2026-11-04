@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.18.1"
+  version: "2.19.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -447,6 +447,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 17 | Scope containment | 5 | SHOULD-FIX |
 | 18 | Evidence-based findings | 5 | MANDATORY |
 | 18b | Honor author's prior justifications | 5 | MANDATORY |
+| 18c | Follow-up on our prior comments (did the author actually resolve them?) | 5 | MANDATORY on re-review |
 | 19 / 19a-19f | Module depth & information leakage (leaked decision, shallow interface & pass-through params, temporal decomposition, fused concerns) | 3b | SHOULD-FIX |
 | 20 / 20a-20f | DRY — one authoritative representation (code clones, parallel lists, copy-pasted bootstrap, cost evidence, over-application guard) | 3b | SHOULD-FIX |
 | 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
@@ -3145,6 +3146,49 @@ gh api "repos/<owner>/<repo>/pulls/<N>/comments" 2>/dev/null   # inline review t
 This check never blocks a PR; it changes what gets reported. Add a row
 `Justificaciones del autor honradas` to the validation table (✅ honored / ⚠️ could not
 read the conversation).
+
+### 18c. Follow-up on our prior comments (MANDATORY on a re-review)
+
+Applies when the PR already carries review comments from us (or the user names the reviewer).
+Where 18b asks "did the author justify it?", 18c asks the opposite question: **did the
+author's answer or fix actually resolve what we asked?** First review of a PR → N/A.
+
+**Collect (paginate everything, keep thread ids and resolved state):**
+
+```bash
+gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){
+  reviewThreads(first:100){nodes{id isResolved isOutdated path line
+    comments(first:50){nodes{databaseId author{login} body createdAt}}}}}}}' -f o=<owner> -f r=<repo> -F n=<N>
+gh api repos/<owner>/<repo>/pulls/<N>/reviews --paginate --slurp   # review bodies + the SHA each reviewed
+gh api user --jq .login                                            # who "we" are; if it is not the reviewer, ask
+git log --oneline <last-reviewed-sha>..pr-<N>                       # what the author pushed since
+```
+
+"Our" comments = threads whose first comment is by the reviewer login (bots such as
+CodeRabbit are tracked separately and never counted as ours). If `gh` cannot read them →
+⚠️ `NO VERIFICADO`; if the user pastes the replies, use those.
+
+**For every prior comment of ours, decide with evidence** (read the code at the PR head, and
+`git diff <reviewed-sha>..pr-<N> -- <path>`, never trust the author's word):
+
+| Verdict | Meaning |
+|---|---|
+| ✅ Atendido | Code changed and the **root cause** is fixed — cite `file:line` now |
+| 🟡 Parcial | Fixed at the cited line, same defect remains elsewhere (give the count) |
+| 🔁 Justificado | Author replied with a technically valid reason → same as 18b |
+| ❌ Sin respuesta | No reply and no change touching that path |
+| ⚠️ Respuesta no corresponde | Author says "fixed in abc123" but the SHA is absent from the PR, does not touch the file, or changes something else |
+| ⚠️ Resuelto sin cambio | Thread marked resolved, code and reply say nothing |
+| 🆕 Regresión | The fix commit introduced a new defect — flag it as a fresh finding with its own `file:line` |
+
+**Carry-forward rule:** anything not ✅/🔁 returns as a finding **at its original severity**
+(a BLOCKER we raised stays a BLOCKER until fixed), quoting the author's reply and answering it
+directly, never repeating the comment verbatim. Outdated threads (`isOutdated`) are checked
+against the moved line, not skipped.
+
+Also run the whole review over the **new commits only** — a fix is new code and gets the
+same checks 1-22. Report a row `Seguimiento de comentarios previos` in the validation table:
+`N previos · X atendidos · Y parciales · Z sin atender · W justificados · R regresiones`.
 
 ### Verdict system (ternary)
 
