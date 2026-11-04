@@ -1,23 +1,24 @@
 ---
 name: go-dev-technical
-description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Two subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name — and then reviews design depth: leaked decisions re-decided at N sites, shallow interfaces carrying pass-through params, DRY violations with no single source of truth, and Uber-Go-Style-Guide idiom breaks the linters miss; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main). Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, stuttering/noise-word/misleading identifiers, information leakage (one decision with N homes and M authorities), hypothetical seams (a param nil in every test), hand-synced parallel constant lists, copy-pasted module bootstrap, unsafe Go idioms (mutex copied by value, panic in a request path, os.Exit outside main), a sentinel error compared with == so the branch never fires on a wrapped error, cancellation that loses its cause, and outdated Go for the module's version — every modern-stdlib rule gated on the go.mod directive so it never proposes an API the module cannot compile."
+description: "Technical validator for Go services on go-bricks — stops broken integrations and bad names from reaching production. Three subcommands: (1) /go-dev-technical review <PR_URL> [LANG] runs the toolchain (build/vet/test-cover/golangci-lint/go fix) in an isolated worktree, then validates go-bricks usage, SQL safety, layer boundaries, messaging/bus contracts, error handling, concurrency, resource leaks and naming — proposing a concrete replacement for every bad name — and then reviews design depth: leaked decisions re-decided at N sites, shallow interfaces carrying pass-through params, DRY violations with no single source of truth, and Uber-Go-Style-Guide idiom breaks the linters miss; (2) /go-dev-technical scan <path> [LANG] audits an existing codebase and emits a phased remediation roadmap sized to the merge constraints (<=400 lines / <=10 files per phase, one branch per phase from main); (3) /go-dev-technical pr-fix <PR> attends the feedback on a PR — reads CodeRabbit, human-reviewer comments and failing CI, summarizes them, validates each with the user against project memory, applies the accepted ones in a separate commit (no amend, no force-push), waits for CI green, replies/resolves threads in English and re-requests review. Catches silent bus-contract mismatches (exchange/queue/routing-key/EventType typos that publish fine and route nowhere), AutoAck message loss, missing DLQ, non-idempotent consumers, dual-write without outbox, SQL injection (Raw/Expr/fmt.Sprintf), reinvented types, raw net/http and sql.DB, wrong layer boundaries, swallowed errors, goroutine and resource leaks, stuttering/noise-word/misleading identifiers, information leakage (one decision with N homes and M authorities), hypothetical seams (a param nil in every test), hand-synced parallel constant lists, copy-pasted module bootstrap, unsafe Go idioms (mutex copied by value, panic in a request path, os.Exit outside main), a sentinel error compared with == so the branch never fires on a wrapped error, cancellation that loses its cause, and outdated Go for the module's version — every modern-stdlib rule gated on the go.mod directive so it never proposes an API the module cannot compile."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.17.0"
+  version: "2.18.0"
   domain: review
-  triggers: go-dev-technical, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
+  triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
   scope: code-review
   output-format: report
-  related-skills: novo-legacy-migration-endpoint, go-bricks-modules
+  related-skills: novo-legacy-migration-endpoint, go-bricks-modules, golang-patterns, golang-code-style, golang-error-handling, golang-testing, common:security-baseline
 ---
 
 # Go Dev Technical (go-bricks)
 
-Technical quality skill for Go services built on go-bricks. Two modes:
+Technical quality skill for Go services built on go-bricks. Three modes:
 - **review** — extends NKH1 `common:pr-review` with go-bricks framework validation + rawQuery safety
 - **scan** — project-wide audit for anti-patterns, unused go-bricks features, and SQL safety
+- **pr-fix** — attend the feedback already left on a PR (CodeRabbit, reviewers, CI): validate, fix in a separate commit, confirm CI, reply/resolve, re-request review
 
 ## Fast path — the whole review on one screen
 
@@ -32,7 +33,7 @@ cannot need it.
 | 3 | **Step 0.6 triage** — what does the diff actually contain? | 5 s | Marks whole check families N/A *with a reason*, so nothing expensive runs pointlessly |
 | 4 | **Step 0.7 sweep** — one pass, all deterministic patterns → `/tmp/rv-sweep.txt` | one tree walk | Replaces ~83 separate greps. Every later check reads this file instead of re-scanning |
 | 5 | **Blockers** from the sweep: SQL injection → stored procs → layer breaks → error/leak/concurrency → 21a idioms | minutes | Fail fast. If it must never merge, say so before spending effort on style |
-| 6 | **Phase 1** NKH1 — size, title, PCI, coverage, version bump | minutes | Cheap, mechanical, and gates the PR regardless of what the code does |
+| 6 | **Phase 1** NKH1 — size, title, PCI, coverage, version bump · **Phase 1b** best-practice skills + check 22 | minutes | Cheap, mechanical, and gates the PR regardless of what the code does |
 | 7 | **Phase 2** go-bricks (checks 1-10) + **Phase 3** correctness & naming (9, 11-16) | the bulk | Judgment work, now aimed by the sweep rather than searching blind |
 | 8 | **Phase 3b** design depth, DRY, Go idioms (19-21) | judgment | Runs on every review and scan. **No count, no finding** |
 | 9 | **Phase 4** go-bricks discovery · **Phase 5** scope & evidence (17-18) | minutes | What the PR could have used; then verify every finding carries `file:line` |
@@ -48,7 +49,8 @@ cannot need it.
 
 **On-demand files** (never loaded until the step that needs them):
 `references/report-template.md` + `references/report-glossary.md` at report-writing time;
-`references/scan-workflow.md` only for the `scan` subcommand.
+`references/scan-workflow.md` only for the `scan` subcommand;
+`references/pr-fix-workflow.md` only for the `pr-fix` subcommand.
 
 ---
 
@@ -56,7 +58,7 @@ cannot need it.
 
 ### Subcommands
 
-This skill supports two subcommands:
+This skill supports three subcommands (plus `help`):
 
 #### 1. `/go-dev-technical review <PR_URL> [LANG]` — Full PR review
 
@@ -131,7 +133,25 @@ The scan will:
 3. Report findings with file:line evidence, categorized by severity
 4. Suggest migration to go-bricks patterns where applicable
 
-#### 3. `/go-dev-technical help` — Help card
+#### 3. `/go-dev-technical pr-fix [PR_URL]` — Attend the feedback on a PR
+
+Alias: `atender-pr`. If no PR is given, **ask for it**. Read `references/pr-fix-workflow.md`
+and follow it literally — every step is mandatory:
+
+1. Collect CodeRabbit comments, human-reviewer threads and failing CI checks (all sources).
+2. Read every comment (English or Spanish) and give an **operational summary in Spanish**.
+3. **Validate each item with the user**, with evidence from project memory/context/code — the
+   context usually answers the comment, and it is still confirmed.
+4. Apply accepted items in a **separate new commit** — never amend, rebase or force-push the PR branch.
+5. Push, then watch CI for **15–20 min** until green (stacked PRs: `gh stack sync`, with explicit OK).
+6. Show reply drafts **in Spanish**, publish them **in English** after approval, resolve the threads.
+7. Re-request review from the reviewers (and `@coderabbitai review`).
+
+Examples:
+- `/go-dev-technical pr-fix` → asks which PR
+- `/go-dev-technical pr-fix https://github.com/novopayment/zinli-business-be-go/pull/42`
+
+#### 4. `/go-dev-technical help` — Help card
 
 ```text
 go-dev-technical — Validador tecnico para servicios Go sobre go-bricks.
@@ -165,6 +185,14 @@ SUBCOMANDOS
         - roadmap por fases: <=400 lineas y <=10 files por fase, una rama por
           fase desde main, prioridad P0..P4, dependencias y diferidos
       Salida: <tmp>/scan-<path>-audit.md
+
+  /go-dev-technical pr-fix [PR_URL]
+      Atiende el feedback de un PR (CodeRabbit, reviewers, CI caido). Pide el PR.
+        1 Recolecta  2 Resumen operativo (ES)  3 Valida CADA comentario contigo
+        4 Fix en commit APARTE (sin amend ni force-push)  5 Push + espera CI 15-20 min
+        6 Borrador en ES -> se publica en EN, resuelve hilos  7 Re-pide review
+      PR apilado: gh stack sync (force-with-lease en los de arriba) solo con tu OK.
+      Nada se publica en GitHub sin tu aprobacion.
 
   /go-dev-technical help
       Esta tarjeta.
@@ -335,6 +363,40 @@ what is broken** — then reason about what the toolchain cannot see. See
 6. **Tests**: coverage on changed code — **floor 70%, goal 85%** — error paths covered
 7. **Style**: defer to linters (golangci-lint, gofmt, staticcheck)
 
+### Phase 1b — Best-practice standards (check 22)
+
+Runs on every `review` and `scan`, and is the same bar `pr-fix` writes its fixes to.
+
+**Step 1 — load the standards the diff touches** (read them, do not review from memory), and
+cite the source skill on every finding that comes from one:
+
+| Diff touches | Load |
+|---|---|
+| any Go | `golang-code-style`, `golang-patterns`, `golang-error-handling` |
+| `*_test.go` | `golang-testing` |
+| module wiring / `Init` / deps | `go-bricks-modules` |
+| goroutines, channels, ctx | `golang-pro` |
+| a measured bottleneck / hot path | `golang-performance` |
+| secrets, PAN, crypto, logs, auth, tenant | `common:security-baseline` |
+| DDL / migrations | `common:database-design-and-naming` |
+| branch, commit, PR, promotion | `common:sdlc-developer-quick-reference` |
+| a migration repo | `novo-legacy-migration-endpoint` → "Implementation Rules" |
+
+**Step 2 — check 22, the mechanical code-quality rules** (SHOULD-FIX; NIT for comments):
+
+| Rule | Detect |
+|---|---|
+| ≤7 params per func (group into a struct) | `grep -nE 'func .*\(([^,)]*,){7,}'` on added lines |
+| Cyclomatic complexity ≤15 | `gocyclo -over 15` on changed files (or the `gocyclo` linter) |
+| Comments are short and say WHY, **≤100 chars/line** (no lengthy blocks) | awk on added comment lines |
+| No source-language refs in comments (Java, Jackson, Spring, "parity") | `grep -rniE 'Java\|Jackson\|Spring\|parity'` on added `//` lines |
+| Constants unexported when single-package | sweep exported `const` with no cross-package use |
+| SQL in `queries.go`, not inline; `getDB` func, never a raw injected DB | sweep |
+| Every `Raw`/`Expr`/`SetExpr` carries `// SECURITY: Manual SQL review completed - …` | check 1b |
+
+A rule that the PR breaks **by legacy parity** (a name or code mirroring the Java contract)
+is documented, not reported (rule 5). Every finding still needs `file:line` + the concrete fix.
+
 ### Phase 2 — go-bricks validation (checks 1-10)
 
 Anti-patterns: the PR must not reinvent go-bricks types, break layer boundaries,
@@ -388,6 +450,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 19 / 19a-19f | Module depth & information leakage (leaked decision, shallow interface & pass-through params, temporal decomposition, fused concerns) | 3b | SHOULD-FIX |
 | 20 / 20a-20f | DRY — one authoritative representation (code clones, parallel lists, copy-pasted bootstrap, cost evidence, over-application guard) | 3b | SHOULD-FIX |
 | 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
+| 22 | Best-practice standards: skills loaded per diff + params ≤7, complexity ≤15, comment rules | 1b | SHOULD-FIX / NIT |
 
 ---
 

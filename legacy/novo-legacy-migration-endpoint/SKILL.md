@@ -2155,7 +2155,7 @@ changes WHICH error wins or its precedence, that IS a 🔴 divergence.
 | **No source-language refs in comments** | Never mention Java, Jackson, Spring, etc. Check: `grep -rn "Java\|Jackson\|parity\|Spring"` |
 | **Max 7 params** | Group into struct |
 | **Complexity ≤ 15** | Extract helpers |
-| **Comments: WHY not WHAT** | Short + explicit; ≤100 chars/line default, exceed only when necessary, hard cap 150 |
+| **Comments: short, clear, WHY not WHAT** | No lengthy comments — one or two concise lines explaining the *why*. **≤100 chars per line, no exceptions.** If it needs a paragraph, the code or the name is the problem: rename/extract instead. No narrating the code, no history, no ticket stories |
 | **Extend before add** | Same table → extend existing method |
 | **Constants stay local** | Unexported if single-package use |
 
