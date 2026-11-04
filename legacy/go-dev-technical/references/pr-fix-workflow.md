@@ -252,7 +252,9 @@ gh pr edit <PR> --add-reviewer <login1>,<login2>
   re-reviewed the new commit:
   ```bash
   gh pr checks <PR> | grep -i coderabbit          # status on the new head SHA
-  gh api repos/<owner>/<repo>/pulls/<N>/reviews --jq '[.[]|select(.user.login=="coderabbitai[bot]")]|last|.commit_id'
+  # --slurp cannot be combined with --jq, so pipe to jq; paginate or `last` may be a stale review
+  gh api repos/<owner>/<repo>/pulls/<N>/reviews --paginate --slurp \
+    | jq -r '[.[][]|select(.user.login=="coderabbitai[bot]")]|last|.commit_id'
   ```
   Only if its last review is **not** on the pushed head SHA (auto-review disabled, paused,
   or `request_changes_workflow` mode), post `gh pr comment <PR> --body "@coderabbitai review"`.
