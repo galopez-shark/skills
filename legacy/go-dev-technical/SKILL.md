@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.18.0"
+  version: "2.18.1"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -145,7 +145,7 @@ and follow it literally — every step is mandatory:
 4. Apply accepted items in a **separate new commit** — never amend, rebase or force-push the PR branch.
 5. Push, then watch CI for **15–20 min** until green (stacked PRs: `gh stack sync`, with explicit OK).
 6. Show reply drafts **in Spanish**, publish them **in English** after approval, resolve the threads.
-7. Re-request review from the reviewers (and `@coderabbitai review`).
+7. Re-request the human reviewers once CI is green; trigger `@coderabbitai review` only if it did not re-review the new push on its own.
 
 Examples:
 - `/go-dev-technical pr-fix` → asks which PR
@@ -190,7 +190,7 @@ SUBCOMANDOS
       Atiende el feedback de un PR (CodeRabbit, reviewers, CI caido). Pide el PR.
         1 Recolecta  2 Resumen operativo (ES)  3 Valida CADA comentario contigo
         4 Fix en commit APARTE (sin amend ni force-push)  5 Push + espera CI 15-20 min
-        6 Borrador en ES -> se publica en EN, resuelve hilos  7 Re-pide review
+        6 Borrador en ES -> se publica en EN, resuelve hilos  7 Re-pide review (rabbit solo si no re-reviso)
       PR apilado: gh stack sync (force-with-lease en los de arriba) solo con tu OK.
       Nada se publica en GitHub sin tu aprobacion.
 
