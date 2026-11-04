@@ -237,19 +237,30 @@ gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$
 - Also offer one PR-level summary comment (EN) listing the commit(s) and the CI result.
 - Verify afterwards: re-run the GraphQL query and report `resolved X / left open Y`.
 
-## Step 7 — Re-request review
+## Step 7 — Re-request review (only after CI is green)
 
 ```bash
-# human reviewers who commented or requested changes
+# human reviewers who commented or requested changes — the re-request itself notifies them
 gh pr edit <PR> --add-reviewer <login1>,<login2>
-# CodeRabbit (a bot — it re-reviews on a comment command)
-gh pr comment <PR> --body "@coderabbitai review"
 ```
+
+- **Human reviewers:** always re-request them once CI is green. Tag `@login` only in the
+  PR-level summary comment (Step 6) — thread replies already notify thread participants, so
+  do not `@`-mention in every reply.
+- **CodeRabbit:** do **not** comment blindly. It re-reviews on every push by default, so a
+  manual trigger duplicates the review and adds noise. First check whether it already
+  re-reviewed the new commit:
+  ```bash
+  gh pr checks <PR> | grep -i coderabbit          # status on the new head SHA
+  gh api repos/<owner>/<repo>/pulls/<N>/reviews --jq '[.[]|select(.user.login=="coderabbitai[bot]")]|last|.commit_id'
+  ```
+  Only if its last review is **not** on the pushed head SHA (auto-review disabled, paused,
+  or `request_changes_workflow` mode), post `gh pr comment <PR> --body "@coderabbitai review"`.
 
 Confirm which reviewers will be re-requested before running (only those who actually
 reviewed; never add new people on your own). Finish with a short Spanish report: commits
-pushed, CI result, threads replied/resolved/left open, reviewers re-requested, and anything
-still waiting on someone.
+pushed, CI result, threads replied/resolved/left open, reviewers re-requested, whether
+CodeRabbit needed a manual trigger, and anything still waiting on someone.
 
 ## Rules
 
