@@ -4,13 +4,19 @@ description: "Initializes or updates the migration context for a legacy-to-Go pr
 license: MIT
 metadata:
   author: galopez-shark
-  version: "3.2.0"
+  version: "3.3.0"
   domain: migration
   triggers: migration-context, init-migration, novo-context, migration context, inicializar migracion, migration-context ticket
   role: specialist
   scope: configuration
   output-format: config
   related-skills: novo-legacy-migration-endpoint, golang-pro
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: 'bash "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/novo-legacy-migration-context}/hooks/pr-publish-guard.sh"'
 ---
 
 # Migration Context Initialization
