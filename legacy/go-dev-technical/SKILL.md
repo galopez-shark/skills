@@ -4,13 +4,19 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.19.0"
+  version: "2.20.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
   scope: code-review
   output-format: report
   related-skills: novo-legacy-migration-endpoint, go-bricks-modules, golang-patterns, golang-code-style, golang-error-handling, golang-testing, common:security-baseline
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: 'bash "${CLAUDE_SKILL_DIR:-$HOME/.claude/skills/go-dev-technical}/hooks/pr-publish-guard.sh"'
 ---
 
 # Go Dev Technical (go-bricks)
@@ -39,13 +45,19 @@ cannot need it.
 | 9 | **Phase 4** go-bricks discovery · **Phase 5** scope & evidence (17-18) | minutes | What the PR could have used; then verify every finding carries `file:line` |
 | 10 | Write the report — read `references/report-template.md` **now**, not earlier | minutes | Loading the template before the findings exist only costs context |
 
-**Five rules that override anything below.** They are the ones that fail a review when broken:
+**Six rules that override anything below.** They are the ones that fail a review when broken:
 
 1. **Phase 0 always.** A review that never compiled the diff reports what the reviewer imagined.
 2. **Every finding carries `file:line` + a concrete failure scenario + a fix.** No exceptions.
 3. **Unverifiable is ⚠️ NO VERIFICADO, never ✅.** A gap acknowledged beats a gap hidden.
 4. **Every SHOULD-FIX carries its concrete proposal** — the exact name, the `git mv` destination, the before→after diff, or (Phase 3b) the count plus the proposed owner. Without it the item is not ready and is not emitted.
 5. **Legacy parity beats aesthetics.** A name or a code that replicates the Java contract is documented, not reported.
+
+6. **No silent skips.** Every subcommand ends by printing its checklist of mandatory steps with
+   the evidence of each (review: Fast-path rows 1-10 and checks 1-22 as run/N-A-with-reason;
+   scan: its phases; pr-fix: the table in `references/pr-fix-workflow.md`). A step without
+   evidence is `❌ NO EJECUTADO`, never omitted and never `✅`. Anything published to GitHub
+   needs the user's approval of the **exact text** — approving a plan is not approving the text.
 
 **On-demand files** (never loaded until the step that needs them):
 `references/report-template.md` + `references/report-glossary.md` at report-writing time;
