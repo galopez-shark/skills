@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.20.0"
+  version: "2.21.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -150,8 +150,9 @@ The scan will:
 Alias: `atender-pr`. If no PR is given, **ask for it**. Read `references/pr-fix-workflow.md`
 and follow it literally — every step is mandatory:
 
+0. **PR health check** (read-only, in Spanish): behind/conflicts, stack state, size, title, version bump. Rebase is never silent: merge-main by default, rebase only on request.
 1. Collect CodeRabbit comments, human-reviewer threads and failing CI checks (all sources).
-2. Read every comment (English or Spanish) and give an **operational summary in Spanish**.
+2. Read every comment (English or Spanish); **show what each reviewer / CodeRabbit wrote, in Spanish, with a short quote and the author's reply**, then the operational summary.
 3. **Validate each item with the user**, with evidence from project memory/context/code — the
    context usually answers the comment, and it is still confirmed.
 4. Apply accepted items in a **separate new commit** — never amend, rebase or force-push the PR branch.
@@ -200,7 +201,8 @@ SUBCOMANDOS
 
   /go-dev-technical pr-fix [PR_URL]
       Atiende el feedback de un PR (CodeRabbit, reviewers, CI caido). Pide el PR.
-        1 Recolecta  2 Resumen operativo (ES)  3 Valida CADA comentario contigo
+        0 Salud del PR (atraso/conflictos/stack/tamano)  1 Recolecta
+        2 Que escribio cada quien (ES) + resumen operativo  3 Valida CADA comentario contigo
         4 Fix en commit APARTE (sin amend ni force-push)  5 Push + espera CI 15-20 min
         6 Borrador en ES -> se publica en EN, resuelve hilos  7 Re-pide review (rabbit solo si no re-reviso)
       PR apilado: gh stack sync (force-with-lease en los de arriba) solo con tu OK.

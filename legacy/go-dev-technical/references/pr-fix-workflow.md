@@ -15,8 +15,9 @@ faithful translation. Never publish anything the user has not approved.
 | # | Step | Gate |
 |---|---|---|
 | 0 | Ask for the PR, resolve repo/branch/stack position | PR identified |
+| 0b | **PR health check** (read-only): behind/conflicts/stack/size/title, in ES | user decides rebase vs merge-main |
 | 1 | Collect: CodeRabbit, human reviews, inline threads, failing CI | — |
-| 2 | Operational summary (ES) of every comment, EN or ES | — |
+| 2 | Report in ES **what each reviewer / CodeRabbit wrote** (quote + author reply) + operational summary | — |
 | 3 | Validate each item with the user (ask, don't assume) | user verdict per item |
 | 4 | Apply the accepted items in a **separate commit** (never amend / force-push) | user approves commit |
 | 5 | Push, then wait 15–20 min watching CI until green | CI green |
@@ -40,6 +41,43 @@ gh stack view 2>/dev/null   # is this PR part of a stack? which position?
   (same rule as `review` Step 0.1); otherwise `git fetch origin <headRefName>` + checkout it.
 - Note the stack position. A PR with PRs **above** it needs a `gh stack sync` after the push
   (Step 5) — flag it now so the user is not surprised.
+
+## Step 0b — PR health check (read-only, before reading any comment)
+
+Goal: leave the PR in good shape, not only answer comments. Collect, change nothing:
+
+```bash
+gh pr view <PR> --json mergeable,mergeStateStatus,baseRefName,headRefName,isDraft,title,body,additions,changedFiles,commits,statusCheckRollup
+git fetch origin <baseRefName> <headRefName>
+git rev-list --left-right --count origin/<baseRefName>...origin/<headRefName>   # behind / ahead
+git merge-tree --write-tree origin/<baseRefName> origin/<headRefName> >/dev/null 2>&1 || echo CONFLICTS
+gh stack view 2>/dev/null                                                      # position, PRs below / above
+gh pr view <base-pr> --json state                                              # stacked: is the lower PR still open?
+```
+
+Report **in Spanish**, one line per item, with ✅ / ⚠️ and the recommended action:
+
+| Item | What to check | If it fails |
+|---|---|---|
+| Atraso vs base | commits behind `origin/<base>` | recommend merge-main or rebase (see below) |
+| Conflictos | `merge-tree` / `mergeable=CONFLICTING` | list the files; resolve before touching comments |
+| Stack | PRs below/above; is the lower PR merged (base now stale)? is `gh stack view` consistent with the PR base? | recommend `gh stack sync`; name the upper branches it will force-push |
+| Tamaño | new prod LOC ≤400 and files ≤10 (tests excluded, as in `review` Phase 1) | tell the user the PR is over the cap |
+| Título / cuerpo | `type: desc` ≤72 chars, no ticket in title, `Refs:` in body | NIT — propose the new text |
+| Versión | version bump present and not colliding with `main` | recommend resolving the bump line |
+| Draft / CI base | is draft? is the base branch itself red? | report; do not "fix" a red base |
+| Historial | fixup/WIP commits, merge commits mixed in | report only |
+
+**Rebase vs merge-main.** The skill never force-pushes the PR branch, so when the branch is
+behind or conflicting it offers two options and runs **neither** without an explicit answer:
+1. **Merge `origin/<base>` into the branch** (new merge commit, plain push, no force) — default.
+2. **Rebase** onto `origin/<base>` — rewrites history and needs `--force-with-lease`; only if
+   the user asks for it by name, and in a stack only via `gh stack sync` with the branches that
+   will be rewritten named in the confirmation. A review already in progress anchors on the
+   old SHAs, so say that reviewers' line comments may move.
+
+If the health check finds a blocker (conflicts, stale stack base), say so **first** and ask
+whether to fix it before the comment work, since the comment fixes would be built on a stale branch.
 
 ## Step 1 — Collect everything (all sources, no sampling)
 
@@ -86,6 +124,11 @@ Read every comment in full, **English or Spanish**, and present a numbered table
 3  | CI: lint      | —                    | errcheck en handler.go:120               | CI          | falla
 ```
 
+- **Before the table, show what each person wrote, in Spanish, under their name:** one block per
+  author (`@reviewer`, `CodeRabbit`, CI) with a short quote of the original (≤2 lines, in its
+  original language) followed by the Spanish rendering, and — if the PR author already
+  replied or pushed a fix — that reply. Nothing is changed before the user has seen this.
+  Add a column `Autor` (who wrote it) and `Respuesta del autor` to the table.
 - "Qué se pide" is **operational**: the concrete change requested, not a paraphrase of the
   tone. If a comment is a question, say so ("pregunta, no pide cambio").
 - Tipo ∈ bug · seguridad · arquitectura · estilo/nit · test · docs · pregunta · CI.
@@ -273,8 +316,9 @@ PR is closed.
 
 | # | Step | Evidence required |
 |---|---|---|
+| 0b | PR health check reported (behind/conflicts/stack/size/title/version) | the ES diagnostic + the user's decision on rebase vs merge-main |
 | 1 | Collected all sources (threads, reviews, issue comments, CI) | counts per source |
-| 2 | Operational summary shown | the table printed |
+| 2 | What each reviewer / CodeRabbit wrote shown in ES + table | the per-author blocks and the table printed |
 | 3 | Every item validated with the user | user verdict per item |
 | 4 | Fix in a new commit, standards checked | commit SHA + `make check`/review-on-diff result |
 | 5 | CI green on the pushed SHA | `gh pr checks` output, SHA |
