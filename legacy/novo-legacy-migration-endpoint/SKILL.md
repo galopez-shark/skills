@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.17.0"
+  version: "4.18.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -682,12 +682,19 @@ Accept the endpoint by name, number, or Java method name.
 
 1. **Load `.migration-context.yaml`** — if missing, tell the user to run `/migration-context` first.
 2. **Resolve the endpoint** in `endpoint_inventory`. Get the ticket number. If no ticket, ask the user.
-3. **Read the Java source** (resource/controller + service + dao/repository) + properties files —
-   same source-of-truth as other subcommands. Java code is the spec.
+3. **ALWAYS read the migration origin (Java source) — mandatory, even if the endpoint is already
+   migrated:** resource/controller + service + dao/repository + properties files. Java is the spec.
+   From it extract and keep, for sections 2 and 5: **(a) the parity flows** (every branch: auth,
+   validation, business, external, DB, success — with its rc/HTTP), **(b) the dependencies**: tables
+   and columns, external services/connectors, other modules or shared components reused, properties
+   and config keys. Never write the plan from memory of the Go code alone.
 4. **Read the Go source** if the endpoint is already migrated (`status: done` or `in_progress`) —
    `internal/modules/<go_module>/` (handlers, service, repository, domain). If `not_started`, derive
    the plan from the Java analysis + existing Go patterns in the project.
-5. **Generate the Plan de Desarrollo** following the template below (6 numbered sections) for the
+5. **Run `/migrate usecases <endpoint>` and ask the user which cases to include** (some cannot be
+   replicated or simulated by QA — propose include/exclude with the reason, the user decides). The
+   approved set feeds the DoD of section 5.
+5b. **Generate the Plan de Desarrollo** following the template below (6 numbered sections) for the
    Jira description.
 6. **Present to the user** for review. Show the full document in chat.
 7. **Ask for approval, then update the Jira description** → convert to ADF and PUT to the ticket via
@@ -743,6 +750,15 @@ Si hay diferencias con endpoints similares, incluir tabla comparativa.}
 {response body literal — rc, msg, y campos de datos}
 ```
 
+### Dependencias (del origen Java)
+
+| Tipo | Detalle |
+|------|---------|
+| Tablas | {tabla.columnas leídas/escritas} |
+| Servicios externos | {conector, método, path} |
+| Módulos / componentes reutilizados | {CustomerReader, handler base, ...} |
+| Configuración | {properties / keys de config} |
+
 ### Errores de negocio
 
 | Condición | HTTP | rc | Mensaje |
@@ -785,7 +801,18 @@ Reutilizado sin duplicar: {lista de componentes compartidos que se reusan}
 
 ## 5. Definition of Done
 
-{Lista de condiciones para considerar el ticket DONE:}
+{Lista de condiciones para considerar el ticket DONE. QA también usa este ticket: el DoD es la
+lista de lo que se certifica. Cada flujo de paridad de la sección 2 es un ítem verificable aquí,
+referenciando su paso (no se copia el flujo; se apunta a él). Incluir SOLO los casos aprobados
+por el usuario tras `/migrate usecases`; los no replicables/no simulables se listan aparte.}
+
+**Flujos de paridad con Java a certificar (QA):**
+- [ ] EST-01 · Flujo 2.1 — Sin Authorization → rc/HTTP {x}
+- [ ] EST-02 · Flujo 2.3 — {condición de negocio} → rc/HTTP {x}, mensaje exacto de RESPONSE_CODES
+- [ ] EST-NN · Flujo 2.N — Éxito → respuesta {campos}, paridad Go vs Java
+**No certificables manualmente (excluidos, con motivo):** EST-NN {stub externo / falla inyectada / concurrencia}
+
+**Técnicos:**
 - PR revisado y aprobado ({branch names de las fases})
 - make check limpio (0 lint issues, 0 race conditions)
 - Mensajes de error verificados contra Java {servicio Java fuente}
