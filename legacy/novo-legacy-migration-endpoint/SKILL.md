@@ -4,9 +4,9 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.14.0"
+  version: "4.15.0"
   domain: migration
-  triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev
+  triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate devplan, plan-dev, migrate plandoc, plan-doc, docx plan de desarrollo
   role: specialist
   scope: implementation
   output-format: code
@@ -33,6 +33,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list (testRigor-style, con IDs `EST-NN`) — QA testing del Go + base de la tabla de escenarios del Plan de Desarrollo
 - `/migrate techdoc <endpoint>` (alias `doc-tecnico`) — generate the technical doc (scope, glossary, structure, construction) + class/flow/data diagrams as images (asks for the output folder)
 - `/migrate devplan <endpoint>` (alias `plan-dev`) — generate the Jira development plan (Plan de Desarrollo) for an endpoint: context, technical description, files, acceptance criteria, DoD, technical notes — formatted for direct update to Jira ticket description
+- `/migrate plandoc <endpoint>` (alias `plan-doc`, `docx`) — generate the formal Plan de Desarrollo **Word/PDF document for QA / certificación** (comparativo or solo-certificación; does not touch Jira)
 - `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
 
 ---
@@ -61,9 +62,12 @@ SUBCOMMANDS
                                base de la tabla de escenarios del Plan de Desarrollo (alias: casos).
   /migrate techdoc <ep>        Technical doc (scope, glossary, structure, construction) + class/flow/
                                data diagrams as images. ASKS for the output folder (alias: doc-tecnico).
-  /migrate devplan <ep>        Jira development plan (Plan de Desarrollo): context, tech description,
+  /migrate devplan <ep>        Jira development plan (Plan de Desarrollo, SOLO Jira): context, tech description,
                                files, acceptance criteria, DoD, tech notes. Updates Jira ticket
                                description directly (alias: plan-dev).
+  /migrate plandoc <ep>        Formal Plan de Desarrollo as Word + PDF for QA / certificacion (tabla de
+                               Pruebas Unitarias comparativa o solo-Go, diagramas, certificacion). NO
+                               toca Jira (aliases: plan-doc, docx).
   /migrate help                This help (alias: ?).
 
 REQUIRES  .migration-context.yaml — run /migration-context first to create it.
@@ -666,7 +670,7 @@ Cada caso se redacta así:
 ## Subcommand: `/migrate devplan <endpoint>` (alias `plan-dev`)
 
 Generates the **Plan de Desarrollo** (development plan) for a migration endpoint and updates the
-Jira ticket description directly. This is the developer-facing technical document that lives in
+Jira ticket description directly. (The Word/PDF document for QA is `/migrate plandoc`.) This is the developer-facing technical document that lives in
 Jira — written in developer language (Spanish), with the exact structure used by the team
 (modeled after CEB-5602 blockUnblock).
 
@@ -681,25 +685,13 @@ Accept the endpoint by name, number, or Java method name.
 4. **Read the Go source** if the endpoint is already migrated (`status: done` or `in_progress`) —
    `internal/modules/<go_module>/` (handlers, service, repository, domain). If `not_started`, derive
    the plan from the Java analysis + existing Go patterns in the project.
-5. **Ask ONE question before generating anything (MANDATORY)**:
-   > ¿Este Plan de Desarrollo es un **comparativo** (migración Java→Go, la tabla de Pruebas
-   > Unitarias muestra la respuesta Golang y la respuesta Java lado a lado) o es **solo
-   > certificación** (endpoint nuevo sin legacy detrás, la tabla de Pruebas Unitarias muestra
-   > únicamente la respuesta Go)?
-   This decides the shape of the Pruebas Unitarias table in BOTH outputs below (Jira ADF and the
-   Word/PDF doc) — never guess it from `.migration-context.yaml` alone, since a `done` endpoint
-   can still be a non-migration addition (e.g. a brand-new field, not a legacy port).
-6. **Generate the Plan de Desarrollo** following the template below (6 numbered sections) for the
+5. **Generate the Plan de Desarrollo** following the template below (6 numbered sections) for the
    Jira description.
-7. **Present to the user** for review. Show the full document in chat.
-8. **Ask**: which output(s) does the user want?
-   - **Jira ticket description** → convert to ADF and PUT to the ticket via Jira REST API (see
-     "Jira update" below).
-   - **Word/PDF document** (the formal "Plan de Desarrollo" artifact filed under
-     `.../proyectos/zinli/{TICKET}({Descripción})/documentacion/`) → follow "Word/PDF output"
-     below. This is a SEPARATE deliverable from the Jira description — same content, different
-     format and audience (QA/certificación vs. developer ticket).
-   - Both are independent; the user can ask for either or both.
+6. **Present to the user** for review. Show the full document in chat.
+7. **Ask for approval, then update the Jira description** → convert to ADF and PUT to the ticket via
+   Jira REST API (see "Jira update" below). This subcommand produces **only** the Jira description.
+   The Word/PDF document for QA/certificación is a different deliverable with its own subcommand:
+   **`/migrate plandoc <endpoint>`**.
 
 ### Template (6 sections — MANDATORY, in this exact order)
 
@@ -837,7 +829,50 @@ When the user approves the update:
    ✅ Plan de Desarrollo actualizado en {TICKET_KEY}
    ```
 
-### Word/PDF output (formal Plan de Desarrollo document)
+
+### When to use this vs other subcommands
+
+| Need | Subcommand |
+|------|-----------|
+| Jira ticket description (Plan de Desarrollo for devs) | **`devplan`** ← this one |
+| Word/PDF Plan de Desarrollo for QA / certificación | `/migrate plandoc` |
+| Jira ticket for PO (Historia de Usuario + subtasks) | `/migration-context ticket` |
+| Technical doc + diagrams (offline/docs folder) | `/migrate techdoc` |
+| QA test scenarios | `/migrate usecases` |
+| Java↔Go parity check | `/migrate verify-parity` |
+
+---
+
+
+## Subcommand: `/migrate plandoc <endpoint>` (alias `plan-doc`, `docx`)
+
+Generates the **formal Plan de Desarrollo document (`.docx` + `.pdf`)** for a migration endpoint —
+the QA / certificación artifact. It does **not** touch Jira; the Jira description is a different
+deliverable (`/migrate devplan`). Same endpoint, different format and audience.
+
+Accept the endpoint by name, number, or Java method name.
+
+### Workflow
+
+1. **Load `.migration-context.yaml`** — if missing, tell the user to run `/migration-context` first.
+2. **Resolve the endpoint** in `endpoint_inventory`. Get the ticket number. If no ticket, ask the user.
+3. **Read the Java source** (resource/controller + service + dao/repository) + properties files — Java is the spec.
+4. **Read the Go source** if migrated (`done` / `in_progress`); if `not_started`, derive from the Java
+   analysis and the existing Go patterns.
+5. **Ask ONE question before generating anything (MANDATORY)**:
+   > ¿Este Plan de Desarrollo es un **comparativo** (migración Java→Go, la tabla de Pruebas
+   > Unitarias muestra la respuesta Golang y la respuesta Java lado a lado) o es **solo
+   > certificación** (endpoint nuevo sin legacy detrás, la tabla de Pruebas Unitarias muestra
+   > únicamente la respuesta Go)?
+   This decides the shape of the Pruebas Unitarias table — never guess it from
+   `.migration-context.yaml` alone, since a `done` endpoint can still be a non-migration addition.
+6. **Draft the content** (scope, definitions, structure, construction, the `EST-NN` scenario list — reuse
+   `/migrate usecases` output if it exists) and **show it in chat for approval before building the file**.
+7. **Build the `.docx` and `.pdf`** following "Process" below, and run its final residue grep.
+8. **Report** the output paths and the case count.
+
+### Process (Word/PDF)
+
 
 This produces the corporate `.docx`/`.pdf` artifact, independent of the Jira description above.
 **Read `PROMPT_PLAN_DESARROLLO.md` in full before starting** — it owns the project-agnostic
@@ -986,16 +1021,6 @@ the content already fully drafted (text for all 6 sections + the EST table conte
 BEFORE delegating — never ask the agent to invent business content), and explicit instructions to
 **stop and report back** if the real template structure doesn't match what's described here, rather
 than improvising a merge by hand.
-
-### When to use this vs other subcommands
-
-| Need | Subcommand |
-|------|-----------|
-| Jira ticket description (Plan de Desarrollo for devs) | **`devplan`** ← this one |
-| Jira ticket for PO (Historia de Usuario + subtasks) | `/migration-context ticket` |
-| Technical doc + diagrams (offline/docs folder) | `/migrate techdoc` |
-| QA test scenarios | `/migrate usecases` |
-| Java↔Go parity check | `/migrate verify-parity` |
 
 ---
 
