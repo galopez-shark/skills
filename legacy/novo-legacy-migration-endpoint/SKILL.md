@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.16.0"
+  version: "4.17.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -868,10 +868,49 @@ Accept the endpoint by name, number, or Java method name.
    > únicamente la respuesta Go)?
    This decides the shape of the Pruebas Unitarias table — never guess it from
    `.migration-context.yaml` alone, since a `done` endpoint can still be a non-migration addition.
-6. **Draft the content** (scope, definitions, structure, construction, the `EST-NN` scenario list — reuse
-   `/migrate usecases` output if it exists) and **show it in chat for approval before building the file**.
+6. **Draft the content in sub-steps 6.1 → 6.8 — one at a time, each shown in chat and approved
+   by the user before the next** (see "Sub-steps of step 6" below). Nothing is built until 6.8 passes.
 7. **Build the `.docx` and `.pdf`** following "Process" below, and run its final residue grep.
-8. **Report** the output paths and the case count.
+8. **Report** the output paths, the case count, and print the completion checklist with evidence
+   (one row per sub-step 6.1-6.8 + build + residue grep; a row without evidence is `❌ NO EJECUTADO`).
+
+**Output folder (fixed):** `.../proyectos/zinli/{TICKET}({Descripción})/documentacion/` — the `.docx`,
+`.pdf`, the three diagram images and their `.plantuml` sources all live together there, as in
+CEB-5361 / CEB-5614. Create the folder if it is missing; never write outside it.
+
+### Sub-steps of step 6
+
+Every text sub-step has a **hard character cap**. Count it (`len()` on the final string, spaces
+included) and print `N/300` next to the draft; over the cap → shorten and recount, never ship it.
+Text comes from the real Java/Go code, never invented, in Spanish, developer language.
+
+| Sub-step | Section | Content | Rule |
+|---|---|---|---|
+| **6.1** | Alcance | Text ≤ **300 chars** (what is migrated/added, endpoint + method + path, read/write, why) **plus** a separate last line `Ticket: https://jira4novo.atlassian.net/browse/{TICKET}` | The ticket line is NOT counted in the 300 |
+| **6.2** | Definiciones, Acrónimos y Abreviaturas | ≤ **300 chars**, only terms that actually appear in the document (PAN, cardToken, rc, …) | If nothing needs defining write `N/A` |
+| **6.3** | Estructura | ≤ **300 chars**: layers/modules (handlers, service, repository, domain) and what each does, from the real Go tree | No file listings |
+| **6.4** | Construcción | ≤ **300 chars**: Go/go-bricks version, QueryBuilder/Entity, tables touched, notable decisions (e.g. ambiguous row → "no registrada") | Real tables and versions only |
+| **6.5** | Diagramas | Generate **3 images** in the output folder: `{endpoint} - Diagrama de Clases.png`, `{endpoint} - Diagrama de Flujo.png`, `{endpoint} - Estructura de Datos.png`, each with its `.plantuml` source | Flow: reuse the validated `.plantuml` from `docs/modules/<module>/` + Novopayment skin; classes/data from the real Go types and tables — never generic. All three are mandatory (CEB-5614 shipped without the flow image) |
+| **6.6** | Ajustes realizados | Table `Aplicaciones involucradas \| Cambios aplicados`, filled from the phases' PRs/commits (`git log`/`gh pr list`) and the `go.mod` diff (e.g. endpoint enabled, go-bricks vX → vY, new config) | **Never empty or missing** — an empty section breaks the TOC with `¡Error! Marcador no definido`. Show the rows for approval |
+| **6.7** | Pruebas Unitarias | Run **`/migrate usecases <endpoint>`** to get the accurate scenario list, then **ask the user which cases to include**, proposing a verdict per case (include / exclude) | See "Case selection" below. Shape follows the comparativo vs solo-certificación answer of step 5 |
+| **6.8** | Revisión previa al build | Print: `N/300` per text sub-step, the three image paths (exist ✅/❌), Ajustes rows count, case count after selection | Any ❌ blocks the build |
+
+**Case selection (6.7).** `usecases` returns the full set (happy, negative, edge, external, auth).
+Present them as a table with a proposed decision and the reason, and ask the user — one
+`AskUserQuestion` per group if there are many:
+
+- **Reproducible by QA with Postman** → propose *include*.
+- **Needs an external stub/mock** (KYC, SGC, third-party connector), **fault injection** (forcing a DB
+  failure) or **real concurrency** → propose *exclude* and mark the reason "no replicable / no
+  simulable". The user decides; never include them silently and never drop them silently.
+- After the selection, renumber every `EST-NN` / "N°" sequentially and update every place that states
+  the total (Control de Revisión row, summaries).
+
+**Sections that come from the base template and are filled in step 7** (not drafted above):
+Historial de cambios, Control de Revisión, "Nombre del esquema de la base de datos",
+Datos para Configurar e Instalar (the `curl` for Java and Go use `Authorization: Bearer <token>` —
+**never a real token**, PCI policy), and Requisitos para la Certificación (`Ruta de Repositorio` =
+latest git tag on `main`, not a raw commit SHA; `Usuario`/`Clave` empty).
 
 ### Process (Word/PDF)
 
