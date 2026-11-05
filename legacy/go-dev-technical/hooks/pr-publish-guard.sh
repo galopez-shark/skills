@@ -9,7 +9,7 @@ try:
 except Exception:
     sys.exit(0)
 publish = [
-    r"\bgh\s+pr\s+(comment|edit|close|reopen|review|merge|ready)\b",
+    r"\bgh\s+pr\s+(create|comment|edit|close|reopen|review|merge|ready)\b",
     r"\bgh\s+issue\s+(comment|edit|close)\b",
     r"\bgh\s+api\b.*(/replies\b|resolveReviewThread|unresolveReviewThread|mutation\b)",
     r"\bgh\s+api\b.*(-X|--method)[ =]+(POST|PUT|PATCH|DELETE)\b",
