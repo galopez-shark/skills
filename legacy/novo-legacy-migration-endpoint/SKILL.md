@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.19.0"
+  version: "4.19.1"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -682,8 +682,19 @@ Accept the endpoint by name, number, or Java method name.
 
 `migrate-ticket-plan` and `migrate-doc-plan` describe the same endpoint, so they read and write
 **one** file instead of each re-deriving (and possibly contradicting) the other:
-`docs/modules/<go_module>/<endpoint>.plan-data.yaml` in the Go repo (committed, not the gitignored
-`.migration-context.yaml`).
+`docs/modules/<go_module>/<endpoint>.plan-data.yaml` in the Go repo — **local only, never committed
+or pushed**.
+
+**Ignore it before writing (MANDATORY):** the file must be git-ignored so it cannot reach the repo.
+```bash
+git check-ignore -q docs/modules/<go_module>/<endpoint>.plan-data.yaml \
+  || echo 'docs/modules/**/*.plan-data.yaml' >> "$(git rev-parse --git-path info/exclude)"
+git check-ignore -q docs/modules/<go_module>/<endpoint>.plan-data.yaml && echo IGNORED
+```
+`.git/info/exclude` is local to the checkout, so the Go repo gets no `.gitignore` diff. If the check
+still fails, **do not write the file** — tell the user. If the repo's own `.gitignore` already covers
+it, nothing to add. Because it is not versioned, a teammate or a fresh clone will not have it: then
+`mtp`/`mdp` simply rebuild it (step 5) and ask the case questions again.
 
 ```yaml
 ticket: CEB-XXXX
@@ -703,7 +714,7 @@ cases:                     # approved by the user after /migrate usecases
 
 Rules: if the file exists, **reuse it** and ask only about what changed (new flows, new cases,
 state); if it does not, create it after step 5 of whichever subcommand runs first. The `EST-NN`
-ids are identical in the Jira DoD and the Word table. Never put PANs, tokens or credentials in it.
+ids are identical in the Jira DoD and the Word table. Never put PANs, tokens or credentials in it — it stays local, but it is still treated as sensitive.
 
 ### Workflow
 
@@ -735,7 +746,7 @@ ids are identical in the Jira DoD and the Word table. Never put PANs, tokens or 
    **`/migrate migrate-doc-plan <endpoint>`**.
 8. **Print the completion checklist with evidence** — one row each: Java origin read (files), flows and
    dependencies extracted (counts), `usecases` run, cases approved by the user (included/excluded),
-   shared plan data written, Jira description read + backup path, diff approved, Jira updated
+   shared plan data written **and confirmed ignored (`git check-ignore`)**, Jira description read + backup path, diff approved, Jira updated
    (issue key + timestamp). A row without evidence is `❌ NO EJECUTADO`, never `✅`.
 
 ### Template (6 sections — MANDATORY, in this exact order)
