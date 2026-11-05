@@ -264,6 +264,30 @@ reviewed; never add new people on your own). Finish with a short Spanish report:
 pushed, CI result, threads replied/resolved/left open, reviewers re-requested, whether
 CodeRabbit needed a manual trigger, and anything still waiting on someone.
 
+## Completion checklist (MANDATORY — print it before the final report)
+
+Instructions alone get skipped, so the run ends with this table, one row per step, each with
+**evidence** (the command that ran, the answer the user gave). A row with no evidence is
+printed `❌ NO EJECUTADO` — never `✅`. If any row is `❌`, say so first and do not claim the
+PR is closed.
+
+| # | Step | Evidence required |
+|---|---|---|
+| 1 | Collected all sources (threads, reviews, issue comments, CI) | counts per source |
+| 2 | Operational summary shown | the table printed |
+| 3 | Every item validated with the user | user verdict per item |
+| 4 | Fix in a new commit, standards checked | commit SHA + `make check`/review-on-diff result |
+| 5 | CI green on the pushed SHA | `gh pr checks` output, SHA |
+| 6 | Replies/resolves published | the **approved ES draft** + the exact EN text posted |
+| 7 | Re-review requested only as needed | reviewers added, CodeRabbit decision |
+
+**Approving the plan is not approving the text.** The user approves the exact English text of
+every reply, summary comment and re-request, shown literally one gate at a time
+(`AskUserQuestion` for validation, the diff and the drafts). A gate is never grouped,
+summarized or assumed from an earlier "ok". The publishing commands (`gh api .../replies`,
+`resolveReviewThread`, `gh pr comment`, `gh pr edit`, `gh pr close`) are also guarded by the
+skill's `PreToolUse` hook, which forces a confirmation prompt showing the literal command.
+
 ## Rules
 
 - **Never force-push the PR branch**, never amend or rebase it. The only force-push allowed

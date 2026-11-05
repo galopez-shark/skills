@@ -2475,3 +2475,13 @@ Generated with [Claude Code](https://claude.com/claude-code)
 | A cross-module read that publishes to the bus or writes the outbox | Reads have no side effects, or every consumer becomes a producer |
 | An internal HTTP endpoint to serve a sibling module | In-process interface injection — same binary, no network |
 | Register the consumer before the provider in `main.go` | Provider first, or the dependency is `nil` at runtime and no linter catches it |
+
+---
+
+## Completion checklist (MANDATORY — print before finishing)
+
+Before reporting done, print every step this skill marks MANDATORY/required/always, each with
+its **evidence** (command run, file written, answer the user gave). A step with no evidence
+is shown as `❌ NO EJECUTADO` — never omitted, never `✅`. Judging a step "redundant for this
+case" is the user's call: ask, do not drop it silently. Approving a plan is not approving
+anything that gets published or committed — those need the exact text/diff approved.

@@ -1171,3 +1171,13 @@ internal/modules/{module}/
 - **Preserve existing entries on re-invoke** — only add/update, never remove unless asked
 - **go-bricks is MANDATORY** — every migration must use go-bricks patterns; the mapping section is required
 - **Endpoint inventory must be complete** — every endpoint in the source must be listed, even if not yet planned for migration
+
+---
+
+## Completion checklist (MANDATORY — print before finishing)
+
+Before reporting done, print every step this skill marks MANDATORY/required/always, each with
+its **evidence** (command run, file written, answer the user gave). A step with no evidence
+is shown as `❌ NO EJECUTADO` — never omitted, never `✅`. Judging a step "redundant for this
+case" is the user's call: ask, do not drop it silently. Approving a plan is not approving
+anything that gets published or committed — those need the exact text/diff approved.
