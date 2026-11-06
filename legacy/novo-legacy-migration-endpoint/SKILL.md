@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.19.1"
+  version: "4.20.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -2077,6 +2077,21 @@ Before writing the first line of code in any phase, validate ALL applicable item
 2. Run test command from context (`make check`, etc.) — 0 issues. Must satisfy the NovoPayment Go
    quality gates: **staticcheck · go vet · gosec · gocyclo · ineffassign · `go test -cover`**.
 3. Verify coverage — NKH1 **floor 70%** on changed code, **goal 85%**; keep per-package ~85%.
+3b. **USE-CASE TEST GATE (MANDATORY)** — every unit created or changed in this phase has its
+   use-case test (see "Every created unit ships with its use-case test"). Mechanical check first,
+   then the matrix:
+   ```bash
+   go test -coverprofile=/tmp/phase.cover ./internal/modules/{module}/... >/dev/null
+   CHANGED=$(git diff --name-only "$BASE"...HEAD -- '*.go' ':(exclude)*_test.go')
+   go tool cover -func=/tmp/phase.cover | grep -F "$CHANGED" | awk '$NF=="0.0%"'   # any line = a unit with NO test
+   ```
+   Any `0.0%` function in a changed file → write its test now (or justify it as exempt in one
+   line: DTO / constant / generated / wiring). Then print the **use-case coverage matrix**:
+
+   | Unit (file:func) | Test(s) | EST-NN / scenario | Observable outcome asserted |
+   |---|---|---|---|
+
+   A unit with no row fails closed, same as a BLOCKER: do not proceed to the self-review gate.
 4. Bump version in versioning file
 5. `grep -rn` for source-language references — 0 matches
 6. `grep -rn "log.Printf\|fmt.Println"` — 0 debug logs
@@ -2307,6 +2322,34 @@ In `verify-parity`, a Go consolidation of repeated source checks is **🟢 mejor
 divergence) — *as long as* the firing order and resulting code/message match. If the consolidation
 changes WHICH error wins or its precedence, that IS a 🔴 divergence.
 
+### Every created unit ships with its use-case test (NON-NEGOTIABLE)
+
+Everything this skill creates or changes — handler, service method, repository method, mapper,
+validator, helper with logic — **must have a unit test of its use case, in the same phase and the
+same PR**. Never "tests in the next phase", never "covered indirectly by a bigger test".
+
+- **Use-case test, not coverage padding.** Each test pins a business scenario and asserts the
+  **observable outcome**: the rc/HTTP returned, the rows written or not, the external call made or
+  not, the error that wins. A test that only executes lines fails review check 15.
+- **Named after the scenario, traceable to the use-case list.** When `/migrate usecases` has
+  produced the `EST-NN` list (or `plan-data.yaml` has the approved cases), name the test after it:
+  `TestService_Foo_EST03_PanNotRegistered`. The case ids are the same ones QA certifies, so a test
+  that matches no case is either a missing case in the list or noise.
+- **Every branch that changes the response is a case:** each business error code, each validation
+  precedence, success variants, the repository/DB error and the not-found path. Money-path
+  decisions are tested branch by branch.
+- **Written with the code, in the same phase.** Test-first is welcome. A phase with production code
+  and no test for it has not ended.
+- **Exempt (no logic to validate):** plain DTO/struct declarations, constants, generated code and
+  module wiring (`module.go` route registration is covered by the handler test that hits the route).
+  Anything with a branch, a computation or a side effect is NOT exempt.
+- **Tests exercise the real unit with mocks at its boundary** (go-bricks `mocks.MockDatabase`,
+  `fixtures.NewMockRows`, mocked repo/service), per "Testing Patterns" below.
+
+**Gate (checked at Phase END, step 3b):** build the use-case coverage matrix — one row per unit
+created or changed in this phase, with its test(s) and `EST-NN`. A unit without a row, or a
+`0.0%` function in a changed file, fails closed: write the test before the phase ends.
+
 ### Code Quality
 
 | Rule | Details |
@@ -2393,6 +2436,10 @@ the go-bricks outbox in the same DB transaction (`outbox.Publish(ctx, tx, …)` 
 ---
 
 ## Testing Patterns
+
+> **Rule:** every unit created or changed has a use-case test in the same phase (see
+> "Every created unit ships with its use-case test"). The coverage tables below say *which cases*
+> each layer needs; the Phase END gate (3b) proves that none was skipped.
 
 ### File structure
 
