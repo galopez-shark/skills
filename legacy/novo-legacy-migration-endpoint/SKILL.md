@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.20.0"
+  version: "4.21.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -959,7 +959,7 @@ Accept the endpoint by name, number, or Java method name.
    by the user before the next** (see "Sub-steps of step 6" below). Nothing is built until 6.8 passes.
 7. **Build the `.docx` and `.pdf`** following "Process" below, and run its final residue grep.
 8. **Report** the output paths, the case count, and print the completion checklist with evidence
-   (one row per sub-step 6.1-6.8 + build + residue grep; a row without evidence is `❌ NO EJECUTADO`).
+   (one row per sub-step 6.1-6.8 + response images generated (count, marked "no capturadas") + build + residue grep; a row without evidence is `❌ NO EJECUTADO`).
 
 **Output folder (fixed):** `.../proyectos/zinli/{TICKET}({Descripción})/documentacion/` — the `.docx`,
 `.pdf`, the three diagram images and their `.plantuml` sources all live together there, as in
@@ -1052,10 +1052,26 @@ Unitarias table shape:**
   heading style) between Clases and Estructura de datos — the base template doesn't have it by
   default, but the process always needs a flow diagram there.
 
-**Response-cell styling (mandatory, makes JSON readable):** in Pruebas Unitarias, every response
-cell (Go and/or Java) must use a monospace font — `Consolas`, 8.5pt. Set `r.font.name`, `r.font.size`
-AND the `w:rFonts/@w:eastAsia` attribute (python-docx silently ignores just the first two in some
-Word renderers without the third).
+**Response cells are Postman-style IMAGES (as in the reference docs CEB-5361 / CEB-5614).** In the real
+Plan de Desarrollo, each `RESPONSE GOLANG` / `RESPONSE JAVA` cell holds a **screenshot of the Postman
+request and response** (method + URL, headers table, status, body with `rc`/`msg`), not JSON text. The
+user chose to have these **generated** as images:
+
+- **Render one PNG per response** (Pillow, or an HTML → PNG render) with a Postman-like layout: method
+  and URL line, a headers table (`country`, `language`, `channel`, `Content-Type`, `accept`, `switch`,
+  `Authorization: Bearer <token>`), the status badge and the pretty-printed JSON body. Dark theme, ~600 px
+  wide, legible when scaled to the cell. Save them next to the docx (e.g. `casos/EST-NN-go.png`,
+  `EST-NN-java.png`) and insert with `run.add_picture` into the cell — Go in column 1, Java in column 2.
+- **Content comes from the real code, never invented:** Go from the handler/service/`RESPONSE_CODES`,
+  Java from the Java source and properties. The request mirrors the case (headers present or omitted as
+  the case says). No real token, PAN, account number, expiry or CVV: use `Bearer <token>` and the
+  masked/test values only.
+- **Transparency is mandatory:** these images are **derived from the code, not captured from a run**.
+  Each image carries a small, legible footer line `Respuesta esperada — derivada del código (no capturada)`,
+  and the final report states `N imágenes generadas (no capturadas)`. Never present a generated image as
+  evidence of an execution. If QA needs real evidence for a case, the user replaces that image with a real
+  Postman capture — keep the same file name so the swap is trivial.
+- **Solo-certificación** docs have only the Go image; **comparativo** docs have both.
 
 **Non-reproducible cases: ask the user, default to removing them, never silently list them as
 normal cases.** Any `EST-NN` that requires an external stub/mock (KYC, SGC, any third-party
