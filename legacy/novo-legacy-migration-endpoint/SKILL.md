@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.25.0"
+  version: "4.26.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -693,6 +693,20 @@ Cada caso se redacta así:
   precondición de estado). QA debe poder copiar-pegar y reproducir sin interpretar.
 
 ---
+
+### Question protocol (shared by `mtp`, `mdp` and `usecases`)
+
+Ask in **rounds**, not one long form:
+1. **Read before asking.** Anything answerable from `.migration-context.yaml`, the Java origin, the
+   Go repo or Jira is read, never asked. Ask only what only the user knows.
+2. **Frontier only.** A round holds every question whose prerequisites are already answered
+   (max 4, with a recommended option first). Never ask a question that depends on an answer you
+   do not have yet; it goes to the next round.
+3. **"I don't know" is an answer.** Record the item as `pendiente`, look it up if it can be read,
+   and do not invent a value to move on.
+4. **Stop when the frontier is empty.** Then print what was decided (one line per item) and ask
+   for a single confirmation before writing or publishing anything.
+5. **Do not re-ask** a decision the user already made in this session.
 
 ## Subcommand: `/migrate migrate-ticket-plan <endpoint>` (alias `mtp`; legacy: `devplan`, `plan-dev`)
 
