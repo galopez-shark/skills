@@ -217,6 +217,16 @@ legacy/
 └── go-dev-technical/                 SKILL.md, hooks/, references/ (report template, glossary, scan workflow, pr-fix workflow)
 ```
 
+## Upstream watch
+
+We learn from public skill repos and adapt what fits our flow. [`docs/upstream-watch.md`](docs/upstream-watch.md)
+records the last reviewed commit, what was already adopted and the candidates left.
+
+```bash
+scripts/check-upstream.sh          # commits and skill files changed since the last review (read-only)
+scripts/check-upstream.sh --mark   # record the current upstream HEAD as reviewed
+```
+
 ## Contributing
 
 1. Branch from `main` using `feat/`, `fix/` or `docs/` and a short description.
