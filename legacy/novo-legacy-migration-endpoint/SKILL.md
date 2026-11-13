@@ -4,9 +4,9 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.28.0"
+  version: "4.29.0"
   domain: migration
-  triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
+  triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate scan-all, scan-all, audit, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
   scope: implementation
   output-format: code
@@ -28,6 +28,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate list` — list all endpoints with code status **and live Jira status** (mismatches flagged ⚠️)
 - `/migrate status <endpoint>` — show phase-level detail for one endpoint
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
+- `/migrate scan-all [module|ids]` (alias `audit`) — project-wide READ-ONLY audit of every built endpoint: parity with Java, untested units, Jira, CDSI and a ready-for-QA verdict
 - `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
 - `/migrate parity-solve <endpoint> cases (<ids>)` (alias `solve-parity`) — plan fixes for the selected verify-parity divergences (≤300 new lines / ≤10 files per phase)
 - `/migrate usecases <endpoint>` (alias `casos`) — extract the Java use-case / test-scenario list (testRigor-style, con IDs `EST-NN`) — QA testing del Go + base de la tabla de escenarios del Plan de Desarrollo
@@ -64,6 +65,7 @@ SUBCOMMANDS
                                apiladas con gh-stack por defecto (sin esperar merges).
   /migrate list                Table of every endpoint: code status + live Jira status (⚠️ on mismatch).
   /migrate roadmap             Recommended wave order + effort estimates.
+  /migrate scan-all [module]   Project-wide read-only audit: parity, tests, Jira, CDSI, QA verdict (alias: audit).
   /migrate status <endpoint>   Phase-level detail for one endpoint.
   /migrate verify-parity <ep>  Read-only Java↔Go business-logic symmetry report (alias: simetria).
   /migrate parity-solve <ep> cases (1,2,3)
@@ -312,6 +314,14 @@ Show the full migration roadmap with recommended order and effort estimates.
 1. Start migrating the next recommended endpoint
 2. Change the priority order
 3. Create Jira tickets for a wave
+
+---
+
+## Subcommand: `/migrate scan-all [module|ids]` (alias `audit`)
+
+**MANDATORY:** when this subcommand runs, read `references/scan-all.md` **in full** BEFORE doing
+anything else — it holds every step and rule of the subcommand. Never run it from memory or from
+this summary. If the file cannot be read, stop and tell the user.
 
 ---
 

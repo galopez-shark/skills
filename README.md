@@ -90,6 +90,7 @@ cp -R legacy/* ~/.claude/skills/
 | `list` | | Every endpoint with its code status **and live Jira status** (read through the Atlassian connector on every call). It also shows the migration ticket's **assignee** and the linked **CDSI redirect tickets for TEST and UAT** and flags endpoints that lack one. Mismatches are flagged with `⚠️`; it never edits Jira or the yml. |
 | `status <endpoint>` | | Phase-level detail for one endpoint. |
 | `roadmap` | | Recommended wave order and effort estimates. |
+| `scan-all [module\|ids]` | `audit` | Project-wide **read-only** audit of every built endpoint: Java parity (one sub-agent per endpoint), untested units, Jira, CDSI and a ready-for-QA verdict. Complements `/go-dev-technical scan`, which audits Go code quality. |
 | `verify-parity <endpoint>` | `simetria` | Read-only Java ↔ Go business-logic symmetry report. |
 | `parity-solve <endpoint> cases (…)` | `solve-parity` | Plans fixes for the selected parity divergences (≤300 lines / ≤10 files per phase). |
 | `usecases <endpoint>` | `casos` | Extracts the use-case and test-scenario list, with `EST-NN` identifiers. |
