@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.26.0"
+  version: "4.27.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -35,6 +35,18 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 - `/migrate migrate-ticket-plan <endpoint>` (alias `mtp`) — generate the Jira development plan (Plan de Desarrollo) for an endpoint: context, technical description, files, acceptance criteria, DoD, technical notes — formatted for direct update to Jira ticket description
 - `/migrate migrate-doc-plan <endpoint>` (alias `mdp`) — generate the formal Plan de Desarrollo **Word/PDF document for QA / certificación** (comparativo or solo-certificación; does not touch Jira)
 - `/migrate help` (alias `?`) — show available subcommands, usage, and key rules
+
+---
+
+## When NOT to use this skill
+
+- No `.migration-context.yaml` or the endpoint is not in the inventory → run
+  `/novo-legacy-migration-context` first.
+- A new endpoint with no Java origin: there is no parity to protect; this skill's parity rules
+  do not apply.
+- Fixing a defect in the legacy Java service itself.
+- Reviewing someone else's PR → `/go-dev-technical review`; attending its feedback →
+  `/go-dev-technical pr-fix`.
 
 ---
 
@@ -2761,3 +2773,11 @@ its **evidence** (command run, file written, answer the user gave). A step with 
 is shown as `❌ NO EJECUTADO` — never omitted, never `✅`. Judging a step "redundant for this
 case" is the user's call: ask, do not drop it silently. Approving a plan is not approving
 anything that gets published or committed — those need the exact text/diff approved.
+
+## Working if (how the user can tell the run went well)
+
+- Parity decisions and the seams were printed and approved **before** the first line of code.
+- Each phase stayed within the caps and ended with the Phase END gates, not just a green build.
+- Every created unit has a row in the use-case coverage matrix, with an independent expected value.
+- Nothing was published, committed or written to Jira without the exact text/diff approved.
+- The completion checklist was printed with evidence; gaps read `❌ NO EJECUTADO`.

@@ -4,7 +4,7 @@ description: "Initializes or updates the migration context for a legacy-to-Go pr
 license: MIT
 metadata:
   author: galopez-shark
-  version: "3.4.0"
+  version: "3.5.0"
   domain: migration
   triggers: migration-context, init-migration, novo-context, migration context, inicializar migracion, migration-context ticket
   role: specialist
@@ -54,6 +54,14 @@ NOTES
 
 NEXT  after setup, use `/migrate list`, `/migrate roadmap`, or `/migrate <endpoint>`.
 ```
+
+---
+
+## When NOT to use this skill
+
+- Migrating or planning one endpoint → `/migrate <endpoint>`, `mtp`, `mdp`.
+- A Go repository with no legacy source to inventory.
+- Reviewing a PR → `/go-dev-technical review`.
 
 ---
 
@@ -1201,3 +1209,11 @@ its **evidence** (command run, file written, answer the user gave). A step with 
 is shown as `❌ NO EJECUTADO` — never omitted, never `✅`. Judging a step "redundant for this
 case" is the user's call: ask, do not drop it silently. Approving a plan is not approving
 anything that gets published or committed — those need the exact text/diff approved.
+
+## Working if (how the user can tell the run went well)
+
+- `.migration-context.yaml` was saved and every inventory endpoint has a status and complexity.
+- Questions came in rounds, nothing readable from the repos was asked, nothing was re-asked.
+- Unknowns are recorded as `pendiente`, not invented.
+- Nothing was written to Jira without the exact content approved.
+- The completion checklist was printed with evidence; gaps read `❌ NO EJECUTADO`.
