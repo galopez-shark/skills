@@ -44,7 +44,6 @@ cannot need it.
 |---|---|---|---|
 | 1 | Resolve the PR ref (`git fetch origin refs/pull/<N>/head`) | seconds | A wrong branch means a wrong review. Never guess |
 | 2 | **Phase 0** — worktree, `build` / `vet` / `test -cover` / `golangci-lint` / `go fix` | minutes | The toolchain finds what reading cannot. Never opine on an uncompiled diff |
-| 2b | **Step 0.5b mergeability** — `git merge-tree` against the base, commits behind | seconds | A PR that conflicts cannot land, however clean its code. Catches stacked PRs whose parent was squash-merged |
 | 3 | **Step 0.6 triage** — what does the diff actually contain? | 5 s | Marks whole check families N/A *with a reason*, so nothing expensive runs pointlessly |
 | 4 | **Step 0.7 sweep** — one pass, all deterministic patterns → `/tmp/rv-sweep.txt` | one tree walk | Replaces ~83 separate greps. Every later check reads this file instead of re-scanning |
 | 5 | **Blockers** from the sweep: SQL injection → stored procs → layer breaks → error/leak/concurrency → 21a idioms | minutes | Fail fast. If it must never merge, say so before spending effort on style |
@@ -574,30 +573,6 @@ git log origin/main..pr-<N> --oneline
 Report it as: *"⚠️ `gh` sin scope de repo — no pude leer el título real; el commit
 `<subject>` son N chars y cumple"*. Never silently claim ✅ on something you
 could not read.
-
-### Step 0.5b — Mergeability: behind main and conflicts (MANDATORY)
-
-A review that never asks "can this merge?" can approve a PR that GitHub will refuse. It matters
-most for **stacked** PRs: when the parent PR is squash-merged, its changes land on `main` under a
-new hash, and the child branch still carries the old commits, so it conflicts on the same files.
-This runs locally, so it works when `gh` has no scope:
-
-```bash
-git fetch origin "$BASE" --force
-echo "atraso: $(git rev-list --count pr-<N>..origin/$BASE) commits de $BASE que el PR no tiene"
-# Simulates the merge without touching the worktree, the index or any ref
-git merge-tree --write-tree --name-only origin/$BASE pr-<N>
-```
-
-- Output with `CONFLICT (content)` lines → **BLOCKER `[merge]`**: list the conflicting files and
-  the commits behind. The code may be fine; it still cannot land. Fix = update the branch
-  (`gh stack sync` for a stacked PR, otherwise merge `$BASE`), resolve, re-run the toolchain
-- Behind with a clean merge → NIT: say how many commits behind
-- Not run, or `gh`/`git` could not resolve the base → ⚠️ `NO VERIFICADO`, never ✅
-
-**Size is measured with a tree diff when the parent was squash-merged.** In that case
-`origin/$BASE...pr-<N>` (three dots) re-counts the parent's already-merged changes; use
-`git diff origin/$BASE pr-<N>` (two dots) for the PR's real increment, and say which one you used.
 
 ### Step 0.6 — Triage: decide which check families can apply (MANDATORY, 5 seconds)
 
