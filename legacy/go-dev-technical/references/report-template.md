@@ -108,6 +108,18 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 ---
 
+### 🎯 Spec — ¿entrega lo que se pidió? (check 23)
+
+Va **aparte** de los hallazgos de estándares; no se mezcla ni se reordena con ellos. Si no hay spec, escribir "sin spec disponible".
+
+| Tipo | Spec (cita) | Hallazgo |
+|------|-------------|----------|
+| Falta / parcial | `EST-04 …` | sin test ni código |
+| No pedido | — | endpoint extra en `module.go:30` |
+| Implementado mal | `rc 12 …` | el mensaje difiere del Java |
+
+---
+
 ### 📌 Para el próximo commit
 
 - {item 1 — forward-looking, no bloquea este PR}
