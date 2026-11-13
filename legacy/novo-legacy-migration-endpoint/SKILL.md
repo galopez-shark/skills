@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.21.0"
+  version: "4.22.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -25,7 +25,7 @@ Migrates a single legacy endpoint to an idiomatic Go microservice. Requires `.mi
 
 **Supports subcommands:**
 - `/migrate` or `/migrate <endpoint>` — migrate a specific endpoint (default behavior)
-- `/migrate list` — list all endpoints with migration status
+- `/migrate list` — list all endpoints with code status **and live Jira status** (mismatches flagged ⚠️)
 - `/migrate status <endpoint>` — show phase-level detail for one endpoint
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
 - `/migrate verify-parity <endpoint>` (alias `simetria`) — validate Java↔Go business-logic symmetry for one endpoint (read-only report)
@@ -50,7 +50,7 @@ SUBCOMMANDS
   /migrate <endpoint>          Migrate an endpoint (default). Reads Java, plans phases, executes
                                domain → repository → service → handler → docs, one branch per phase,
                                apiladas con gh-stack por defecto (sin esperar merges).
-  /migrate list                Table of every endpoint + migration status.
+  /migrate list                Table of every endpoint: code status + live Jira status (⚠️ on mismatch).
   /migrate roadmap             Recommended wave order + effort estimates.
   /migrate status <endpoint>   Phase-level detail for one endpoint.
   /migrate verify-parity <ep>  Read-only Java↔Go business-logic symmetry report (alias: simetria).
@@ -100,50 +100,67 @@ After printing, ask what the user wants to do next (list / roadmap / migrate / v
 
 ## Subcommand: `/migrate list`
 
-Load `.migration-context.yaml` and display the endpoint inventory as a table:
+Table with the **code status** (from the yml), the **live Jira status** of every ticket, and the
+**CDSI tickets for TEST and UAT** (the redirect) linked to it.
+`list` only reads `.migration-context.yaml` and Jira; it never writes to either. Run the Jira
+read (step 2) on **every** call — never print the table from the file alone, and never reuse a
+Jira status from an earlier call.
+
+1. **Read the inventory** (`endpoint_inventory`): id, module, endpoint, HTTP method, `status`,
+   `ticket`, `current_phase`, `current_branch`, `complexity`. If the file doesn't exist, tell the
+   user to run `/novo-legacy-migration-context` first.
+2. **Read the Jira status of every ticket** with the Atlassian connector (never a stored API
+   token): one `searchJiraIssuesUsingJql` with `key in (<tickets>)` and
+   `fields: ["status", "issuelinks"]`. An unrestricted search blows the token limit.
+   **CDSI tickets**: from the same response, take the issue links whose linked key starts with
+   `CDSI-` (no extra call). Classify each one as TEST or UAT by the environment named in its
+   summary; if it names neither or both, show the key with `?` and say it is unclassified.
+   Never infer a CDSI from the endpoint name; a missing link is reported as missing. If the connector is not authorized or the call
+   fails, print the table with the Jira column as `n/d`, say so on the first line, and do not
+   guess a status.
+3. **Columns**: `#` · Endpoint · HTTP · Code status (yml) · Jira status · Ticket ·
+   CDSI TEST · CDSI UAT · Phase / PR · Complexity. Each CDSI cell is `CDSI-NNN (status)`,
+   `❌` when no ticket is linked, or `—` when the endpoint has not started. Group rows by module with a `n/m done` header.
+4. **Flag every mismatch** between code status and Jira status with a `⚠️` row note (e.g. code
+   `done` but Jira `Abierta`, or code `in_progress` but Jira `Finalizada`). Also flag with `⚠️`
+   an endpoint that is `done`, or whose Jira status is Ready For QA / QA IN PROGRESS / Finalizada,
+   and has no CDSI for TEST or for UAT: the redirect cannot be requested without it. Report the
+   mismatches; never edit Jira or the yml to hide them.
+5. **Show QA follow-up in the Phase column** when a QA bug fix is in review (e.g.
+   `fix CEB-6842 · #386 → #387`): the yml tracks migration phases, not QA bugs, so a `done`
+   endpoint can still have work in flight.
+6. **Summary line**: counts by code status (done / in progress / not started / blocked), by
+   Jira status (Finalizada, Ready For QA, QA IN PROGRESS, En curso, Abierta), and how many
+   endpoints lack a CDSI for TEST and for UAT.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                           ENDPOINT MIGRATION STATUS                                    │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ MODULE: accounts                                                          4/4 done ✅  │
-│  #  │ Endpoint              │ HTTP │ Status     │ Phase    │ Ticket   │ Complexity     │
-│  1  │ getBalance             │ GET  │ ✅ done     │ —        │ CEB-5479 │ ★★★☆☆ medium  │
-│  2  │ getCardHolder          │ GET  │ ✅ done     │ —        │ CEB-5479 │ ★★★☆☆ medium  │
-│  3  │ getCVV2                │ GET  │ ✅ done     │ —        │ CEB-5479 │ ★★☆☆☆ simple  │
-│  4  │ preventiveBlock        │ PUT  │ ✅ done     │ —        │ CEB-5602 │ ★★★★☆ medium  │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ MODULE: funds_transfer                                                    3/3 done ✅  │
-│  5  │ cashIn                 │ POST │ ✅ done     │ —        │ CEB-5479 │ ★★★★☆ medium  │
-│  6  │ cashOut                │ POST │ ✅ done     │ —        │ CEB-5479 │ ★★★★☆ medium  │
-│  7  │ p2p                    │ POST │ ✅ done     │ —        │ CEB-5480 │ ★★★★★ complex │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ MODULE: cards (new)                                                    0/6 not started │
-│  8  │ cancelCard             │ PUT  │ ❌ pending  │ —        │ —        │ ★★★★☆ medium  │
-│  9  │ physicalCardAssign     │ POST │ ❌ pending  │ —        │ —        │ ★★★★★ complex │
-│ 10  │ setCardPin             │ POST │ ❌ pending  │ —        │ —        │ ★★★☆☆ medium  │
-│ 11  │ changePin              │ PUT  │ ❌ pending  │ —        │ —        │ ★★★☆☆ medium  │
-│ 12  │ cardReissue            │ POST │ ❌ pending  │ —        │ —        │ ★★★★★ complex │
-│ 13  │ getCardInfo            │ GET  │ ❌ pending  │ —        │ —        │ ★★☆☆☆ simple  │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ MODULE: enrolls (new)                                                  0/5 not started │
-│ 14  │ enrollment             │ POST │ ❌ pending  │ —        │ —        │ ★★★★★ complex │
-│ 15  │ enrollmentUpdate       │ PUT  │ ❌ pending  │ —        │ —        │ ★★★☆☆ medium  │
-│ 16  │ enrollmentDelete       │ PUT  │ ❌ pending  │ —        │ —        │ ★★★☆☆ medium  │
-│ 17  │ enrollAndIssue         │ POST │ ❌ pending  │ —        │ —        │ ★★★★★ complex │
-│ 18  │ getLastCardToken       │ GET  │ ❌ pending  │ —        │ —        │ ★★☆☆☆ simple  │
-├─────────────────────────────────────────────────────────────────────────────────────────┤
-│ SUMMARY                                                                                │
-│ ✅ Done: 13  │ 🔄 In Progress: 0  │ ❌ Not Started: 11  │ 🚫 Blocked: 0              │
-│ Est. remaining phases: ~47-62                                                          │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   ENDPOINT MIGRATION STATUS                                              │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ MODULE: accounts                                                                           3/4 done ✅   │
+│ # │ Endpoint        │HTTP│ Code     │ Jira         │ Ticket   │ CDSI TEST    │ CDSI UAT    │ Phase/PR   │
+│ 1 │ getBalance      │GET │ ✅ done   │ Finalizada   │ CEB-5479 │ CDSI-101 (OK)│ CDSI-102 (OK)│ —         │
+│ 2 │ getCardHolder   │GET │ ✅ done   │ Ready For QA │ CEB-5479 │ CDSI-103 (OK)│ ❌ ⚠️        │ —         │
+│ 3 │ getCVV2         │GET │ ✅ done   │ Abierta ⚠️   │ CEB-5480 │ ❌ ⚠️        │ ❌ ⚠️        │ fix · #386│
+│ 4 │ preventiveBlock │PUT │ 🔄 phase 2│ En curso     │ CEB-5602 │ —            │ —           │ #95 → #96  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ SUMMARY  Code: ✅ 3 │ 🔄 1 │ ❌ 0 │ 🚫 0   Jira: Finalizada 1 │ Ready For QA 1 │ ...   Sin CDSI: TEST 1 │ UAT 2 │
+│ ⚠️ #2 getCardHolder: Ready For QA without CDSI for UAT                                                   │
+│ ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no CDSI for TEST or UAT                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Data source**: Read `endpoint_inventory` from `.migration-context.yaml`. If the file doesn't exist, tell the user to run `/migration-context` first.
+**Keeping the yml current** is a separate, explicit step: `/migrate status <endpoint>` updates
+it only when a phase changed; anything else (QA state, open PRs, notes) is edited by hand. After
+the table, if there are mismatches, offer to reconcile — and **ask before editing** the yml.
 
-**After displaying**: Ask if the user wants to:
+**Jira facts to respect**: a `Finalizada` ticket has no transitions and cannot be reopened
+through the connector; moving a parent to `Ready For QA` is transition `2` ("Listo para QA");
+bug subtasks of type `Bug QA` start with transition `2` ("Empezar").
+
+**After displaying**: ask if the user wants to:
 1. Start migrating a specific endpoint
-2. Update the status of any endpoint
+2. Reconcile the yml with the mismatches shown (asks before writing)
 3. View the roadmap
 
 ---
