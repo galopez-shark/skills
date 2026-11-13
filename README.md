@@ -110,7 +110,7 @@ instead of duplicating it.
 
 | Subcommand | Description |
 |---|---|
-| `review <PR_URL> [LANG]` | Runs the toolchain (build, vet, test with coverage, golangci-lint, `go fix`) in an isolated worktree, then verifies go-bricks usage, SQL safety, layer boundaries, bus contracts, runtime defects, naming, design depth and DRY, and the best-practice standards (check 22). On a re-review it also verifies that the author actually resolved the reviewer's earlier comments (check 18c). Default report language is Spanish; pass `EN` for English. |
+| `review <PR_URL> [LANG]` | Runs the toolchain (build, vet, test with coverage, golangci-lint, `go fix`) in an isolated worktree, then verifies go-bricks usage, SQL safety, layer boundaries, bus contracts, runtime defects, naming, design depth and DRY, the best-practice standards (check 22), the spec axis (check 23) and that every changed unit has a test (check 24). On a re-review it also verifies that the author actually resolved the reviewer's earlier comments (check 18c). Default report language is Spanish; pass `EN` for English. |
 | `scan <path> [LANG]` | Audits an existing codebase and emits a phased remediation roadmap sized to the merge caps. |
 | `pr-fix [PR]` | Attends the feedback on a pull request. See below. |
 | `help` | Subcommands and what each one catches. |
