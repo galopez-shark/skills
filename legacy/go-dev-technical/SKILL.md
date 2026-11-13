@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.24.0"
+  version: "2.25.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -424,7 +424,7 @@ is documented, not reported (rule 5). Every finding still needs `file:line` + th
 Anti-patterns: the PR must not reinvent go-bricks types, break layer boundaries,
 or escape the QueryBuilder unsafely.
 
-### Phase 3 — Correctness, runtime & naming (checks 9, 11-16)
+### Phase 3 — Correctness, runtime & naming (checks 9, 11-16, 24)
 
 Correctness bugs and code smells linters miss, plus API/naming design.
 
@@ -474,6 +474,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 20 / 20a-20f | DRY — one authoritative representation (code clones, parallel lists, copy-pasted bootstrap, cost evidence, over-application guard) | 3b | SHOULD-FIX |
 | 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
 | 22 | Best-practice standards: skills loaded per diff + params ≤7, complexity ≤15, comment rules | 1b | SHOULD-FIX / NIT |
+| 24 | Every created/changed unit has a use-case test (`0.0%` functions in changed files) | 3 | SHOULD-FIX / BLOCKER on money path |
 | 23 | **Spec axis**: does the PR deliver what the ticket / DoD / `EST-NN` cases / Java parity asked for? | 5 | BLOCKER / SHOULD-FIX |
 
 ---
@@ -538,6 +539,18 @@ grep -v "^mode" /tmp/c.out | awk '$NF==0'             # exact uncovered blocks: 
 Map each uncovered block back to a line and ask: *is this the error path that will
 actually happen in production?* An uncovered transport-failure branch matters more
 than an uncovered getter.
+
+### Step 0.3b — Units with no test at all (feeds check 24)
+
+A function at `0.0%` in a file the PR changed has no test, whatever the package percentage says:
+
+```bash
+go test ./<changed-pkg>/... -coverprofile=/tmp/c.out >/dev/null
+CHANGED=$(git diff --name-only origin/<base>...pr-<N> -- '*.go' ':(exclude)*_test.go')
+go tool cover -func=/tmp/c.out | grep -F "$CHANGED" | awk '$NF=="0.0%"'   # each line = an untested unit
+```
+
+Keep the list; check 24 judges each line. Not run → check 24 is `❌ NO EJECUTADO`.
 
 ### Step 0.4 — Race detector on concurrent code
 
@@ -2235,6 +2248,22 @@ Flag:
 - **Silent fallback**: catch block returns empty/default data instead of propagating the error
 - **Missing validation on external response**: external API response parsed without checking status
 - **Stale cache on error**: cache miss + fetch error → returns stale value without logging
+
+### 24. Every created or changed unit has a use-case test (SHOULD-FIX; BLOCKER on the money path)
+
+The migration standard is that a unit ships with its test in the same PR ("tests in the next
+phase" is not allowed). Use the Step 0.3b list: each `0.0%` function in a changed file is a finding
+unless it is **exempt** — plain DTO/struct, constant, generated code, or module wiring covered by
+the handler test that hits the route. A function with a branch, a computation or a side effect is
+never exempt.
+
+- Report each as `file:func — no test`, naming the scenario that should pin it (the `EST-NN` when a
+  case list exists) and the seam to test it at.
+- A function covered only by a test that executes it without asserting an outcome is a check 15
+  finding, not a pass here.
+- Severity rises to **BLOCKER** when the untested unit decides a money movement, a reversal, a
+  balance or an authorization.
+- Report the count: "N changed functions, M with no test".
 
 ### 15. Test quality (SHOULD-FIX)
 
