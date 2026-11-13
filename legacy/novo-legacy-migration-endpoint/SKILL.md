@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.23.0"
+  version: "4.24.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -135,22 +135,28 @@ Jira status from an earlier call.
    Jira status (Finalizada, Ready For QA, QA IN PROGRESS, En curso, Abierta), and how many
    endpoints lack a CDSI for TEST and for UAT.
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                        ENDPOINT MIGRATION STATUS                                                     │
-├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ MODULE: accounts                                                                                       3/4 done ✅   │
-│ # │ Endpoint        │HTTP│ Code     │ Jira         │ Ticket   │ Asignado     │ CDSI rdr TEST│ CDSI rdr UAT │ Phase/PR │
-│ 1 │ getBalance      │GET │ ✅ done   │ Finalizada   │ CEB-5479 │ Ana Pérez    │ CDSI-101 (OK)│ CDSI-102 (OK)│ —        │
-│ 2 │ getCardHolder   │GET │ ✅ done   │ Ready For QA │ CEB-5479 │ Ana Pérez    │ CDSI-103 (OK)│ ❌ ⚠️         │ —        │
-│ 3 │ getCVV2         │GET │ ✅ done   │ Abierta ⚠️   │ CEB-5480 │ sin asignar  │ ❌ ⚠️         │ ❌ ⚠️         │ fix #386 │
-│ 4 │ preventiveBlock │PUT │ 🔄 phase 2│ En curso     │ CEB-5602 │ Luis Gómez   │ —            │ —            │ #95→#96  │
-├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ SUMMARY  Code: ✅ 3 │ 🔄 1 │ ❌ 0 │ 🚫 0   Jira: Finalizada 1 │ Ready For QA 1 │ ...   Sin CDSI: TEST 1 │ UAT 2        │
-│ ⚠️ #2 getCardHolder: Ready For QA without CDSI for UAT                                                               │
-│ ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no CDSI for TEST or UAT                                               │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+**Output format — Markdown, never box-drawing.** Print the result as plain Markdown (NOT inside a
+code fence) so the UI renders real tables: a `###` heading per module with its `n/m done`, then
+one pipe table per module with the same header row. Emoji and accents break the alignment of
+ASCII boxes, so do not draw `┌ │ └` borders. Pad each cell to the width of the longest cell in its
+column so the raw text also lines up, and keep one row per endpoint. Warnings go in a `Notas`
+list under the summary, not inside the cells. Example:
+
+### accounts — 3/4 done ✅
+
+| #  | Endpoint        | HTTP | Code       | Jira         | Ticket   | Asignado    | CDSI redirect TEST | CDSI redirect UAT | Phase / PR |
+|----|-----------------|------|------------|--------------|----------|-------------|--------------------|-------------------|------------|
+| 1  | getBalance      | GET  | ✅ done    | Finalizada   | CEB-5479 | Ana Pérez   | CDSI-101 (OK)      | CDSI-102 (OK)     | —          |
+| 2  | getCardHolder   | GET  | ✅ done    | Ready For QA | CEB-5479 | Ana Pérez   | CDSI-103 (OK)      | ❌ ⚠️             | —          |
+| 3  | getCVV2         | GET  | ✅ done    | Abierta ⚠️   | CEB-5480 | sin asignar | ❌ ⚠️              | ❌ ⚠️             | fix #386   |
+| 4  | preventiveBlock | PUT  | 🔄 phase 2 | En curso     | CEB-5602 | Luis Gómez  | —                  | —                 | #95 → #96  |
+
+**Resumen** — Code: ✅ 3 · 🔄 1 · ❌ 0 · 🚫 0 · Jira: Finalizada 1 · Ready For QA 1 · Abierta 1 ·
+En curso 1 · Sin CDSI redirect: TEST 1, UAT 2
+
+**Notas**
+- ⚠️ #2 getCardHolder: Ready For QA without CDSI redirect for UAT
+- ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no CDSI redirect for TEST or UAT
 
 **Keeping the yml current** is a separate, explicit step: `/migrate status <endpoint>` updates
 it only when a phase changed; anything else (QA state, open PRs, notes) is edited by hand. After
