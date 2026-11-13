@@ -138,6 +138,7 @@ Va **aparte** de los hallazgos de estándares; no se mezcla ni se reordena con e
 | `golangci-lint run ./...` | ✅/❌/⚠️ | comparado contra `origin/main` |
 | `go test -race` | ✅/N/A | sólo si el diff toca concurrencia |
 | Modernización (`go fix -diff`) | ✅/❌/N/A | |
+| Mergeable contra la base (atraso / conflictos, Step 0.5b) | ✅/❌/⚠️ | commits de atraso; archivos en conflicto |
 | **go-bricks** | | |
 | Sin tipos reinventados | ✅/❌/⚠️ | |
 | rawQuery / SQL safety | ✅/❌/⚠️ | |
