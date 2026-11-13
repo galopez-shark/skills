@@ -87,7 +87,7 @@ cp -R legacy/* ~/.claude/skills/
 | Subcommand | Alias | Description |
 |---|---|---|
 | `<endpoint>` | | Migrates the endpoint: domain → repository → service → handler → docs, one branch per phase. Phases are **stacked** with `gh stack` by default and fall back to serial when a phase must wait for certification or review. |
-| `list` | | Every endpoint with its code status **and live Jira status** (read through the Atlassian connector on every call). It also shows the linked **CDSI tickets for TEST and UAT** (the redirect) and flags endpoints that lack one. Mismatches are flagged with `⚠️`; it never edits Jira or the yml. |
+| `list` | | Every endpoint with its code status **and live Jira status** (read through the Atlassian connector on every call). It also shows the migration ticket's **assignee** and the linked **CDSI redirect tickets for TEST and UAT** and flags endpoints that lack one. Mismatches are flagged with `⚠️`; it never edits Jira or the yml. |
 | `status <endpoint>` | | Phase-level detail for one endpoint. |
 | `roadmap` | | Recommended wave order and effort estimates. |
 | `verify-parity <endpoint>` | `simetria` | Read-only Java ↔ Go business-logic symmetry report. |

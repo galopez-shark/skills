@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.22.0"
+  version: "4.23.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -101,7 +101,7 @@ After printing, ask what the user wants to do next (list / roadmap / migrate / v
 ## Subcommand: `/migrate list`
 
 Table with the **code status** (from the yml), the **live Jira status** of every ticket, and the
-**CDSI tickets for TEST and UAT** (the redirect) linked to it.
+**CDSI redirect tickets for TEST and UAT** linked to it.
 `list` only reads `.migration-context.yaml` and Jira; it never writes to either. Run the Jira
 read (step 2) on **every** call — never print the table from the file alone, and never reuse a
 Jira status from an earlier call.
@@ -111,15 +111,17 @@ Jira status from an earlier call.
    user to run `/novo-legacy-migration-context` first.
 2. **Read the Jira status of every ticket** with the Atlassian connector (never a stored API
    token): one `searchJiraIssuesUsingJql` with `key in (<tickets>)` and
-   `fields: ["status", "issuelinks"]`. An unrestricted search blows the token limit.
+   `fields: ["status", "issuelinks", "assignee"]`. An unrestricted search blows the token limit.
    **CDSI tickets**: from the same response, take the issue links whose linked key starts with
    `CDSI-` (no extra call). Classify each one as TEST or UAT by the environment named in its
    summary; if it names neither or both, show the key with `?` and say it is unclassified.
-   Never infer a CDSI from the endpoint name; a missing link is reported as missing. If the connector is not authorized or the call
+   Never infer a CDSI from the endpoint name; a missing link is reported as missing.
+   **Asignado (migración)**: from the same response, the migration endpoint ticket's
+   `assignee.displayName`, or `sin asignar` when empty. It is the CEB ticket's assignee, not the CDSI's. If the connector is not authorized or the call
    fails, print the table with the Jira column as `n/d`, say so on the first line, and do not
    guess a status.
 3. **Columns**: `#` · Endpoint · HTTP · Code status (yml) · Jira status · Ticket ·
-   CDSI TEST · CDSI UAT · Phase / PR · Complexity. Each CDSI cell is `CDSI-NNN (status)`,
+   Asignado (migración) · CDSI redirect TEST · CDSI redirect UAT · Phase / PR · Complexity. Each CDSI cell is `CDSI-NNN (status)`,
    `❌` when no ticket is linked, or `—` when the endpoint has not started. Group rows by module with a `n/m done` header.
 4. **Flag every mismatch** between code status and Jira status with a `⚠️` row note (e.g. code
    `done` but Jira `Abierta`, or code `in_progress` but Jira `Finalizada`). Also flag with `⚠️`
@@ -134,20 +136,20 @@ Jira status from an earlier call.
    endpoints lack a CDSI for TEST and for UAT.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                   ENDPOINT MIGRATION STATUS                                              │
-├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ MODULE: accounts                                                                           3/4 done ✅   │
-│ # │ Endpoint        │HTTP│ Code     │ Jira         │ Ticket   │ CDSI TEST    │ CDSI UAT    │ Phase/PR   │
-│ 1 │ getBalance      │GET │ ✅ done   │ Finalizada   │ CEB-5479 │ CDSI-101 (OK)│ CDSI-102 (OK)│ —         │
-│ 2 │ getCardHolder   │GET │ ✅ done   │ Ready For QA │ CEB-5479 │ CDSI-103 (OK)│ ❌ ⚠️        │ —         │
-│ 3 │ getCVV2         │GET │ ✅ done   │ Abierta ⚠️   │ CEB-5480 │ ❌ ⚠️        │ ❌ ⚠️        │ fix · #386│
-│ 4 │ preventiveBlock │PUT │ 🔄 phase 2│ En curso     │ CEB-5602 │ —            │ —           │ #95 → #96  │
-├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ SUMMARY  Code: ✅ 3 │ 🔄 1 │ ❌ 0 │ 🚫 0   Jira: Finalizada 1 │ Ready For QA 1 │ ...   Sin CDSI: TEST 1 │ UAT 2 │
-│ ⚠️ #2 getCardHolder: Ready For QA without CDSI for UAT                                                   │
-│ ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no CDSI for TEST or UAT                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                        ENDPOINT MIGRATION STATUS                                                     │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ MODULE: accounts                                                                                       3/4 done ✅   │
+│ # │ Endpoint        │HTTP│ Code     │ Jira         │ Ticket   │ Asignado     │ CDSI rdr TEST│ CDSI rdr UAT │ Phase/PR │
+│ 1 │ getBalance      │GET │ ✅ done   │ Finalizada   │ CEB-5479 │ Ana Pérez    │ CDSI-101 (OK)│ CDSI-102 (OK)│ —        │
+│ 2 │ getCardHolder   │GET │ ✅ done   │ Ready For QA │ CEB-5479 │ Ana Pérez    │ CDSI-103 (OK)│ ❌ ⚠️         │ —        │
+│ 3 │ getCVV2         │GET │ ✅ done   │ Abierta ⚠️   │ CEB-5480 │ sin asignar  │ ❌ ⚠️         │ ❌ ⚠️         │ fix #386 │
+│ 4 │ preventiveBlock │PUT │ 🔄 phase 2│ En curso     │ CEB-5602 │ Luis Gómez   │ —            │ —            │ #95→#96  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ SUMMARY  Code: ✅ 3 │ 🔄 1 │ ❌ 0 │ 🚫 0   Jira: Finalizada 1 │ Ready For QA 1 │ ...   Sin CDSI: TEST 1 │ UAT 2        │
+│ ⚠️ #2 getCardHolder: Ready For QA without CDSI for UAT                                                               │
+│ ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no CDSI for TEST or UAT                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Keeping the yml current** is a separate, explicit step: `/migrate status <endpoint>` updates
