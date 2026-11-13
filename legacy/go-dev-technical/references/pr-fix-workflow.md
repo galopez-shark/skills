@@ -162,6 +162,22 @@ Record the user's decision for every item; this table drives Steps 4 and 6.
 
 ## Step 4 — Apply the accepted items in a separate commit
 
+**Red first (failing CI and real bugs).** A fix for a failing check or a reported defect starts
+with a **loop that goes red on exactly that symptom** — never with a theory read off the code:
+
+1. Name **one command** (a test, a `go test -run`, the failing CI job's command) and **run it
+   first**, showing the invocation and its output with secrets redacted. It must reproduce the
+   *reported* failure, not a nearby one, and give the same verdict on every run.
+2. If it cannot be reproduced (flaky, environment-only), say so and ask the user for the log or
+   access; do not fix blind.
+3. For a real bug, write the regression test at the seam that reaches it, watch it **fail**,
+   apply the fix, watch it **pass**. If no such seam exists, report that as a finding instead of
+   adding a shallow test that gives false confidence.
+4. With more than one plausible cause, list 3-5 ranked causes, each with the prediction "if X is
+   the cause, changing Y makes it disappear", and show them to the user before testing.
+5. Tag temporary debug output with a unique prefix (`[DEBUG-xxxx]`) and remove it all before the
+   commit (`grep` the prefix). Style or wording comments need no loop.
+
 Hard rules:
 
 - **New commit(s) on the PR branch. Never `--amend`, never rebase, never `push --force`**
@@ -320,7 +336,7 @@ PR is closed.
 | 1 | Collected all sources (threads, reviews, issue comments, CI) | counts per source |
 | 2 | What each reviewer / CodeRabbit wrote shown in ES + table | the per-author blocks and the table printed |
 | 3 | Every item validated with the user | user verdict per item |
-| 4 | Fix in a new commit, standards checked | commit SHA + `make check`/review-on-diff result |
+| 4 | Fix in a new commit, standards checked | commit SHA + `make check`/review-on-diff result; for a CI failure or bug, the red command run before the fix and its output |
 | 5 | CI green on the pushed SHA | `gh pr checks` output, SHA |
 | 6 | Replies/resolves published | the **approved ES draft** + the exact EN text posted |
 | 7 | Re-review requested only as needed | reviewers added, CodeRabbit decision |

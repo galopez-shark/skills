@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.23.0"
+  version: "2.24.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -474,6 +474,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 20 / 20a-20f | DRY — one authoritative representation (code clones, parallel lists, copy-pasted bootstrap, cost evidence, over-application guard) | 3b | SHOULD-FIX |
 | 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
 | 22 | Best-practice standards: skills loaded per diff + params ≤7, complexity ≤15, comment rules | 1b | SHOULD-FIX / NIT |
+| 23 | **Spec axis**: does the PR deliver what the ticket / DoD / `EST-NN` cases / Java parity asked for? | 5 | BLOCKER / SHOULD-FIX |
 
 ---
 
@@ -3127,6 +3128,25 @@ Flag:
 
 Exception: changes in `internal/plataform/` (shared infra) that are consumed by the module
 changes are acceptable.
+
+### 23. Spec axis — does the PR deliver what was asked? (BLOCKER / SHOULD-FIX)
+
+Every other check asks "is the code written well" (**Standards**). This one asks "is it the
+right code" (**Spec**). A PR can pass one axis and fail the other, so report them under
+**separate headings** (`## Standards`, `## Spec`) and never merge or re-rank findings across them.
+
+1. **Find the spec**, in this order: the Jira ticket in the PR body / `Refs:` line (read it with
+   the Atlassian connector; its DoD and the `EST-NN` list are the spec), then
+   `docs/modules/<module>/<endpoint>.plan-data.yaml` if present, then the Java origin named in
+   `.migration-context.yaml`. If none exists, say "no spec available" and skip — do not invent one.
+2. **Report three things**, quoting the spec line for each:
+   - requirements the spec asked for that are **missing or partial** (an `EST-NN` with no test, a
+     DoD item with no code, a parity flow not implemented);
+   - behavior in the diff that **was not asked for** (scope creep, extra endpoints, renamed codes);
+   - requirements that **look implemented but are wrong** (a response code or message that differs
+     from the Java).
+3. A large diff (>400 changed lines) may delegate this check to a sub-agent with a fresh context
+   (diff + spec only); aggregate its report verbatim under `## Spec`.
 
 ### 18. Evidence-based findings (MANDATORY)
 

@@ -212,7 +212,8 @@ rsync -a --delete legacy/<skill>/ ~/.claude/skills/<skill>/
 ```
 legacy/
 ├── novo-legacy-migration-context/    SKILL.md, hooks/
-├── novo-legacy-migration-endpoint/   SKILL.md, hooks/, assets/ (Plan de Desarrollo template and guide)
+├── novo-legacy-migration-endpoint/   SKILL.md, hooks/, assets/ (Plan de Desarrollo template and guide),
+│                                     references/ (per-subcommand detail, loaded on demand)
 └── go-dev-technical/                 SKILL.md, hooks/, references/ (report template, glossary, scan workflow, pr-fix workflow)
 ```
 
