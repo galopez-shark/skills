@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.21.0"
+  version: "2.22.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -2242,6 +2242,13 @@ Go beyond "tests exist" — verify tests are meaningful:
 - [ ] **Error paths covered**: not just happy path — test what happens when the DB is down, API returns 500, input is malformed
 - [ ] **No tautological assertions**: `assert.Equal(t, result, result)` or asserting the mock's return value
 - [ ] **Complete mocks**: mock objects mirror the full shape of the real object, not just the fields the author expected
+- [ ] **Expected value has an independent source**: the literal, the legacy behavior or the case
+      list — not computed with the same function/constant/query the test targets (a tautology
+      passes whatever the code does). Flag `want := svc.Compute(in)` style assertions
+- [ ] **Mocks only at the boundary**: DB, external client, clock, randomness, lower-layer
+      interface. Flag a mock of the unit under test or of its private helpers
+- [ ] **Named by capability and scenario**, not by internals (`...CallsRepoTwice`); the `EST-NN`
+      of the case is in the name when a case list exists
 - [ ] **No weakened assertions**: existing assertions not removed or relaxed to make tests pass
 - [ ] **`t.Context()` for a test-scoped context** (Go 1.24+) instead of
       `context.WithCancel(context.Background())` — it is cancelled when the test ends, so a

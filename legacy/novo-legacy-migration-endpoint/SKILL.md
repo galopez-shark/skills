@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.24.0"
+  version: "4.25.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -2129,8 +2129,11 @@ Before writing the first line of code in any phase, validate ALL applicable item
    Any `0.0%` function in a changed file → write its test now (or justify it as exempt in one
    line: DTO / constant / generated / wiring). Then print the **use-case coverage matrix**:
 
-   | Unit (file:func) | Test(s) | EST-NN / scenario | Observable outcome asserted |
-   |---|---|---|---|
+   | Unit (file:func) | Test(s) | EST-NN / scenario | Observable outcome asserted | Expected value from |
+   |---|---|---|---|---|
+
+   `Expected value from` names the oracle (Java line, `RESPONSE_CODES` entry, approved case). A
+   row whose expected value is computed by the code under test is a tautology: rewrite the test.
 
    A unit with no row fails closed, same as a BLOCKER: do not proceed to the self-review gate.
 4. Bump version in versioning file
@@ -2386,6 +2389,18 @@ same PR**. Never "tests in the next phase", never "covered indirectly by a bigge
   Anything with a branch, a computation or a side effect is NOT exempt.
 - **Tests exercise the real unit with mocks at its boundary** (go-bricks `mocks.MockDatabase`,
   `fixtures.NewMockRows`, mocked repo/service), per "Testing Patterns" below.
+- **Name the seams before writing the tests.** List, in the phase plan the user already approves,
+  the public boundary each unit is tested at (handler HTTP, service method, repository method)
+  and what is mocked there. A test at a seam that is not in the plan needs the user's OK first.
+- **Expected values come from outside the code under test.** The oracle is the Java behavior, a
+  literal from `RESPONSE_CODES`, or an approved `EST-NN` case — never a value computed with the
+  same function, constant or query the unit uses (a tautological test passes whatever the code
+  does). A hand-written literal beats `want := svc.Compute(in)`.
+- **Mock only the boundary.** Mock the collaborator below the unit (DB through go-bricks mocks,
+  external HTTP client, clock, randomness, the repo/service interface). Never mock the unit under
+  test or its private helpers, and never assert only that a mock was called: assert the outcome.
+- **Name tests by capability and scenario** (`TestService_Foo_EST03_PanNotRegistered`), not by
+  internals (`TestService_Foo_CallsRepoTwice`), so a refactor does not rename them.
 
 **Gate (checked at Phase END, step 3b):** build the use-case coverage matrix — one row per unit
 created or changed in this phase, with its test(s) and `EST-NN`. A unit without a row, or a
