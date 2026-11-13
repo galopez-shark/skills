@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.22.0"
+  version: "2.23.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -25,6 +25,14 @@ Technical quality skill for Go services built on go-bricks. Three modes:
 - **review** — extends NKH1 `common:pr-review` with go-bricks framework validation + rawQuery safety
 - **scan** — project-wide audit for anti-patterns, unused go-bricks features, and SQL safety
 - **pr-fix** — attend the feedback already left on a PR (CodeRabbit, reviewers, CI): validate, fix in a separate commit, confirm CI, reply/resolve, re-request review
+
+## When NOT to use this skill
+
+- Non-Go code (Java, TypeScript, PHP, Python) → `common:pr-review`.
+- Writing or migrating code → `/migrate`; this skill validates, it does not build.
+- No PR URL / path to inspect: `review` and `scan` need a concrete target.
+
+---
 
 ## Fast path — the whole review on one screen
 
@@ -3340,3 +3348,11 @@ pushes back on a naming or concurrency finding:
 **Keep this list honest**: when a rule here stops matching the linked source
 (a Go release changes a default, the style guide is revised), update the rule —
 do not let the skill drift into folklore.
+
+## Working if (how the user can tell the run went well)
+
+- The toolchain evidence (build, vet, test with coverage, lint) is in the report before any finding.
+- Every finding has `file:line`, the rule it breaks and a concrete replacement; BLOCKERs were verified.
+- `pr-fix`: the health check ran first, fixes went in a separate commit (no amend, no force-push),
+  and every publish was confirmed with the exact text.
+- The checklist was printed with evidence; gaps read `❌ NO EJECUTADO`.
