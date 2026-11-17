@@ -223,5 +223,7 @@ Tolerado a propósito (duplicación accidental, no misma razón de cambio): {lis
 
 </details>
 
-**Veredicto** (nunca ✅ con el bloque ⛔ presente): ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
+**Veredicto** (nunca ✅ con el bloque ⛔ presente; un `CHANGES_REQUESTED` nuestro ya atendido según 18c no cuenta como bloque): ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
+**Acción en GitHub**: {APPROVE | COMMENT | REQUEST_CHANGES} — {una línea con la razón; si cierra un CHANGES_REQUESTED nuestro anterior, dilo}
 ```
+

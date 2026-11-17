@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.27.0"
+  version: "2.28.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -631,9 +631,26 @@ counts (say it is outdated: the line moved, but nobody closed or answered it).
   > Cierra o responde cada hilo y resuelve los conflictos; después vuelve a correr la revisión.
   > Para atenderlos: `/go-dev-technical pr-fix <PR>`.
 
-- `reviewDecision: CHANGES_REQUESTED` → also BLOCKER, with the reviewer named.
+- `reviewDecision: CHANGES_REQUESTED` → decide by **who** requested the changes (`gh api user --jq .login`
+  gives who "we" are) and **whether the author already answered**:
+  - **Requested by someone else** → BLOCKER, reviewer named. Only that person can clear it; say so.
+  - **Requested by us (a prior review of ours) → it is a re-review: do NOT treat it as a blocker by
+    itself.** GitHub never clears `CHANGES_REQUESTED` on its own (commits and resolved threads do not
+    clear it; only a new APPROVE or a dismissal does), so a stale state with the work done is
+    expected. Run check **18c** on every item of that review against the PR head and decide:
+    - Every item ✅ Atendido / 🔁 Justificado, no new blocker, no open threads, no conflicts →
+      **verdict ✅ Aprobado**, and the report's last line is
+      `Acción en GitHub: enviar esta revisión como APPROVE — es lo que cierra el CHANGES_REQUESTED anterior.`
+    - Any item 🟡 / ❌ / ⚠️ / 🆕 → the verdict stays ❌ with those items as findings at their
+      original severity; the action line says `REQUEST_CHANGES`.
+    - Never leave the verdict ❌ "por proceso" when 18c says everything was addressed.
 - Zero unresolved threads and no conflicts → one line `✅ Sin conflictos ni hilos abiertos`.
 - `gh` cannot read threads → ⚠️ `NO VERIFICADO`, **never ✅**; the report says so at the top.
+
+**Which GitHub review event to recommend** (end of every report, one line): `REQUEST_CHANGES` only
+when there is a real blocker or an unaddressed SHOULD-FIX; `COMMENT` when only NITs remain (a NIT-only
+review sent as `REQUEST_CHANGES` blocks the merge for no reason and leaves the next re-review stuck);
+`APPROVE` when nothing is open. The skill recommends it; the user submits.
 
 This blocker does not replace the code findings: still run the rest of the review and report
 them below the block. The verdict line cannot be "listo para mergear" while this block is present.
