@@ -403,7 +403,7 @@ cite the source skill on every finding that comes from one:
 | secrets, PAN, crypto, logs, auth, tenant | `common:security-baseline` |
 | DDL / migrations | `common:database-design-and-naming` |
 | branch, commit, PR, promotion | `common:sdlc-developer-quick-reference` |
-| a migration repo | `novo-legacy-migration-endpoint` → "Implementation Rules" |
+| a migration repo | `novo-go-construction-rules` → `references/implementation-rules.md` |
 
 **Step 2 — check 22, the mechanical code-quality rules** (SHOULD-FIX; NIT for comments):
 

@@ -187,8 +187,8 @@ Hard rules:
   ticket in the title**; body lists what was addressed and ends with `Refs: <TICKET>`.
 - **Every fix must meet the same code standards as the migration itself** — a review comment
   is never a license to write lower-quality code. Source of truth: the `go-dev-technical`
-  checks (this skill) for *what* the standard is, and `novo-legacy-migration-endpoint`
-  ("Build to the review standard" + "Implementation Rules") for *how to write it*. Do not
+  checks (this skill) for *what* the standard is, and `novo-go-construction-rules`
+  (`build-to-review-standard.md` + `implementation-rules.md`) for *how to write it*. Do not
   restate them from memory; re-read the relevant section before writing the fix. The ones
   that fixes violate most often:
   - **Funnel & single source:** return through the existing response funnel; a new code and
