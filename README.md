@@ -34,6 +34,7 @@ feedback a pull request receives.
 | [`novo-legacy-migration-context`](legacy/novo-legacy-migration-context/SKILL.md) | Establishes **what** is being migrated: source repositories, properties, database, authentication, external services and the complete endpoint inventory (`.migration-context.yaml`). | `/novo-legacy-migration-context` |
 | [`novo-legacy-migration-endpoint`](legacy/novo-legacy-migration-endpoint/SKILL.md) | Migrates **one endpoint** to Go phase by phase, and produces its Jira and QA documentation. | `/migrate` |
 | [`go-dev-technical`](legacy/go-dev-technical/SKILL.md) | **Validates** go-bricks services and pull requests, and attends PR feedback. | `/go-dev-technical` |
+| [`novo-go-construction-rules`](build/novo-go-construction-rules/SKILL.md) | **Shared construction rules**: phase flow, build-to-review standard, implementation, testing, handler and data-access patterns, SDLC, PR template. Read on demand by `/migrate` (and `/build`); it has no command of its own. | — |
 
 Each skill declares its own version in the `metadata.version` field of its `SKILL.md`.
 
@@ -64,7 +65,7 @@ The steps are independent: any command can be run on its own once `.migration-co
 
 ```bash
 # 1. Install (user level) and open a NEW Claude Code session
-cp -R legacy/* ~/.claude/skills/
+cp -R legacy/* build/* ~/.claude/skills/
 
 # 2. In the Go target repository
 /novo-legacy-migration-context            # one-time project context
@@ -172,12 +173,13 @@ Copy the **complete** skill folders, including `hooks/`, `references/` and `asse
 
 ```bash
 # User level — recommended (the hook's fallback path assumes this location)
-cp -R legacy/* ~/.claude/skills/
+cp -R legacy/* build/* ~/.claude/skills/
 
 # Project level — shared through the target repository
 cp -R legacy/novo-legacy-migration-context  <repo>/.claude/skills/
 cp -R legacy/novo-legacy-migration-endpoint <repo>/.claude/skills/
 cp -R legacy/go-dev-technical               <repo>/.claude/skills/
+cp -R build/novo-go-construction-rules      <repo>/.claude/skills/   # required by /migrate
 ```
 
 Open a **new** Claude Code session afterwards. Skills are loaded when a session starts; an already open session keeps
@@ -187,7 +189,10 @@ the version it loaded.
 
 ```bash
 rsync -a --delete legacy/<skill>/ ~/.claude/skills/<skill>/
+rsync -a --delete build/<skill>/  ~/.claude/skills/<skill>/    # novo-go-construction-rules
 ```
+
+`/migrate` stops with a clear message when `novo-go-construction-rules` is not installed beside it.
 
 ## Requirements
 
@@ -212,6 +217,8 @@ rsync -a --delete legacy/<skill>/ ~/.claude/skills/<skill>/
 ## Repository layout
 
 ```
+build/
+└── novo-go-construction-rules/       SKILL.md, references/ (phase flow, standards and patterns shared by /migrate and /build)
 legacy/
 ├── novo-legacy-migration-context/    SKILL.md, hooks/
 ├── novo-legacy-migration-endpoint/   SKILL.md, hooks/, assets/ (Plan de Desarrollo template and guide),
