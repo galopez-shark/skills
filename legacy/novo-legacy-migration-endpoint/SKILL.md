@@ -124,7 +124,7 @@ After printing, ask what the user wants to do next (list / roadmap / migrate / v
 Table with the **code status** (from the yml), the **live Jira status** of every ticket, and the
 **CDSI redirect tickets for TEST and UAT** linked to it, plus the **QA ticket and who it is
 assigned to**.
-`list` **always reconciles** (step 7): on every call it refreshes the Jira mirror fields in
+`list` **always reconciles** (step 8): on every call it refreshes the Jira mirror fields in
 `.migration-context.yaml` with what Jira says now. It **never writes to Jira**. Run the Jira reads
 (steps 2-3) on **every** call — never print the table from the file alone, and never reuse a Jira
 value from an earlier call or from the yml mirror.
@@ -134,7 +134,7 @@ value from an earlier call or from the yml mirror.
    user to run `/novo-legacy-migration-context` first.
 2. **Read the Jira status of every ticket** with the Atlassian connector (never a stored API
    token): one `searchJiraIssuesUsingJql` with `key in (<tickets>)` and
-   `fields: ["status", "issuelinks", "assignee"]`. An unrestricted search blows the token limit.
+   `fields: ["summary", "status", "issuelinks", "assignee"]`. An unrestricted search blows the token limit.
    **CDSI tickets**: from the same response, take the issue links whose linked key starts with
    `CDSI-` (no extra call). Classify each one as TEST or UAT by the environment named in its
    summary; if it names neither or both, show the key with `?` and say it is unclassified.
@@ -155,23 +155,34 @@ value from an earlier call or from the yml mirror.
    - **Bug QA** subtasks that are not `Finalizada`: not a column; each goes in `Notas` as
      `CEB-NNNN (status, assignee)` and counts in the summary.
    A failed call → both cells `n/d`, said on the first line; never guess.
-4. **Columns**: `#` · Endpoint · HTTP · Code status (yml) · Jira status · Ticket ·
-   Asignado (migración) · Ticket QA · QA asignado · CDSI redirect TEST · CDSI redirect UAT ·
+4. **Certificación** — a column of its own, because `Finalizada` / `Ready For QA` in Jira does
+   **not** mean certified. The endpoint ticket's `summary` (from step 2) decides:
+   - `✅ Certificado` — the summary contains the tag `[QA - OK]` (match case-insensitively and
+     tolerate spaces/dashes: `[QA-OK]`, `[QA - OK]`, `[qa ok]`). This is the **only** thing that
+     marks an endpoint definitively certified. Quote the tag as evidence in `Notas` the first time.
+   - `🟡 QA finalizado` — no tag, but the Ticket QA of step 3 is `Finalizada`. Not definitive:
+     say in `Notas` that the title still lacks `[QA - OK]`.
+   - `⏳ En QA` — no tag, a Ticket QA exists and is not `Finalizada`.
+   - `❌ Sin QA` — no tag and no Ticket QA (endpoint not `not_started`); `—` when not started.
+   Never mark `✅ Certificado` from the Jira status, the QA ticket or the yml alone. Flag with `⚠️`
+   a Jira status `Finalizada` whose title lacks the tag (closed but not certified in the title).
+5. **Columns**: `#` · Endpoint · HTTP · Code status (yml) · Jira status · Ticket ·
+   Asignado (migración) · Ticket QA · QA asignado · Certificación · CDSI redirect TEST · CDSI redirect UAT ·
    Phase / PR · Complexity. Each CDSI cell is `CDSI-NNN (status)`,
    `❌` when no ticket is linked, or `—` when the endpoint has not started. Group rows by module with a `n/m done` header.
-5. **Flag every mismatch** between code status and Jira status with a `⚠️` row note (e.g. code
+6. **Flag every mismatch** between code status and Jira status with a `⚠️` row note (e.g. code
    `done` but Jira `Abierta`, or code `in_progress` but Jira `Finalizada`). Also flag with `⚠️`
    an endpoint that is `done`, or whose Jira status is Ready For QA / QA IN PROGRESS / Finalizada,
    and has no CDSI for TEST or for UAT: the redirect cannot be requested without it. Report the
    mismatches; never edit Jira or the yml to hide them. Also flag with `⚠️` a QA ticket that is
    `Blocked` or `sin asignar` while the endpoint is Ready For QA / QA IN PROGRESS.
-6. **Show QA follow-up in the Phase column** when a QA bug fix is in review (e.g.
+7. **Show QA follow-up in the Phase column** when a QA bug fix is in review (e.g.
    `fix CEB-6842 · #386 → #387`): the yml tracks migration phases, not QA bugs, so a `done`
    endpoint can still have work in flight.
-7. **Reconcile the yml mirror (ALWAYS, automatic, no confirmation).** After printing the table, for
+8. **Reconcile the yml mirror (ALWAYS, automatic, no confirmation).** After printing the table, for
    each endpoint compare what Jira returned with the mirror fields in `.migration-context.yaml`
    and write only the ones that **changed**: `jira_status`, `jira_assignee`, `qa_ticket`,
-   `qa_ticket_status`, `qa_assignee`, `cdsi_test`, `cdsi_uat`, and `jira_synced_at` (only when at
+   `qa_ticket_status`, `qa_assignee`, `certification`, `cdsi_test`, `cdsi_uat`, and `jira_synced_at` (only when at
    least one of the others changed — no churn when nothing changed). Rules:
    - Writes go **only** to those fields. Never touch `status`, `current_phase`, `current_branch`,
      `ticket`, `notes`, or any other field, and never write to Jira.
@@ -180,12 +191,12 @@ value from an earlier call or from the yml mirror.
    - After writing, re-read the file and confirm it still parses as YAML; if it does not, restore
      the previous content and say so.
    - Print a `Reconciliación` list: `#n endpoint: campo antes → después`, or `sin cambios`.
-   - A **code `status` that disagrees with Jira** (step 5's ⚠️) is **not** auto-corrected: Jira
+   - A **code `status` that disagrees with Jira** (step 6's ⚠️) is **not** auto-corrected: Jira
      says what the ticket is, not what the code is. List it under `Reconciliación` as
      `requiere decisión` and offer `/migrate status <endpoint>`.
-8. **Summary line**: counts by code status (done / in progress / not started / blocked), by
+9. **Summary line**: counts by code status (done / in progress / not started / blocked), by
    Jira status (Finalizada, Ready For QA, QA IN PROGRESS, En curso, Abierta), and how many
-   endpoints lack a CDSI for TEST and for UAT, how many lack a QA ticket or have it unassigned,
+   endpoints lack a CDSI for TEST and for UAT, how many are ✅ Certificado (title tag `[QA - OK]`), how many lack a QA ticket or have it unassigned,
    and open Bug QA subtasks.
 
 **Output format — Markdown, never box-drawing.** Print the result as plain Markdown (NOT inside a
@@ -197,17 +208,18 @@ list under the summary, not inside the cells. Example:
 
 ### accounts — 3/4 done ✅
 
-| #  | Endpoint        | HTTP | Code       | Jira         | Ticket   | Asignado    | Ticket QA            | QA asignado | CDSI TEST     | CDSI UAT      | Phase / PR |
-|----|-----------------|------|------------|--------------|----------|-------------|----------------------|-------------|---------------|---------------|------------|
-| 1  | getBalance      | GET  | ✅ done    | Finalizada   | CEB-5479 | Ana Pérez   | CEB-5678 (Finalizada)| Rosa Díaz   | CDSI-101 (OK) | CDSI-102 (OK) | —          |
-| 2  | getCardHolder   | GET  | ✅ done    | Ready For QA | CEB-5479 | Ana Pérez   | CEB-6784 (Blocked) ⚠️| sin asignar | CDSI-103 (OK) | ❌ ⚠️         | —          |
-| 3  | getCVV2         | GET  | ✅ done    | Abierta ⚠️   | CEB-5480 | sin asignar | ❌                   | —           | ❌ ⚠️         | ❌ ⚠️         | fix #386   |
-| 4  | preventiveBlock | PUT  | 🔄 phase 2 | En curso     | CEB-5602 | Luis Gómez  | —                    | —           | —             | —             | #95 → #96  |
+| #  | Endpoint        | HTTP | Code       | Jira         | Ticket   | Asignado    | Ticket QA             | QA asignado | Certificación    | CDSI TEST     | CDSI UAT      | Phase / PR |
+|----|-----------------|------|------------|--------------|----------|-------------|-----------------------|-------------|------------------|---------------|---------------|------------|
+| 1  | getBalance      | GET  | ✅ done    | Finalizada   | CEB-5479 | Ana Pérez   | CEB-5678 (Finalizada) | Rosa Díaz   | ✅ Certificado   | CDSI-101 (OK) | CDSI-102 (OK) | —          |
+| 2  | getCardHolder   | GET  | ✅ done    | Ready For QA | CEB-5393 | Ana Pérez   | CEB-6784 (Blocked) ⚠️ | sin asignar | ⏳ En QA         | CDSI-103 (OK) | ❌ ⚠️         | —          |
+| 3  | getCVV2         | GET  | ✅ done    | Abierta ⚠️   | CEB-5480 | sin asignar | ❌                    | —           | ❌ Sin QA        | ❌ ⚠️         | ❌ ⚠️         | fix #386   |
+| 4  | preventiveBlock | PUT  | 🔄 phase 2 | En curso     | CEB-5602 | Luis Gómez  | —                     | —           | —                | —             | —             | #95 → #96  |
 
 **Resumen** — Code: ✅ 3 · 🔄 1 · ❌ 0 · 🚫 0 · Jira: Finalizada 1 · Ready For QA 1 · Abierta 1 ·
 En curso 1 · Sin CDSI redirect: TEST 1, UAT 2 · Sin ticket QA 1 · QA sin asignar 1 · Bug QA abiertos 1
 
 **Notas**
+- #1 getBalance: título con `[QA - OK]` → certificado
 - ⚠️ #2 getCardHolder: Ready For QA, QA ticket `Blocked` and unassigned; no CDSI redirect for UAT
 - ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no QA ticket; no CDSI redirect for TEST or UAT
 - Bug QA abierto: CEB-6786 (Tareas por hacer, sin asignar) — endpoint #2
@@ -217,7 +229,7 @@ En curso 1 · Sin CDSI redirect: TEST 1, UAT 2 · Sin ticket QA 1 · QA sin asig
 - #2 getCardHolder: `qa_ticket_status` En curso → Blocked
 - #3 getCVV2: requiere decisión — code `done` vs Jira `Abierta` (`/migrate status getCVV2`)
 
-**The yml mirror** is refreshed by step 7 on every call (Jira fields only, never Jira itself). Anything
+**The yml mirror** is refreshed by step 8 on every call (Jira fields only, never Jira itself). Anything
 else — the code `status`, the phase, notes, open PRs — keeps being edited by `/migrate status
 <endpoint>` or by hand, because Jira cannot tell what the code is.
 
