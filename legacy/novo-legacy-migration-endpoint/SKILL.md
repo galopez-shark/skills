@@ -4,7 +4,7 @@ description: "Migrates a single legacy endpoint to Go using the context from nov
 license: MIT
 metadata:
   author: galopez-shark
-  version: "4.31.0"
+  version: "4.32.0"
   domain: migration
   triggers: migration-endpoint, migrate, novo-migrate, migrar endpoint, migrate endpoint, migrate list, migrate status, migrate roadmap, migrate scan, migrate scan-all, scan-all, audit, migrate migrate-ticket-plan, mtp, migrate migrate-doc-plan, mdp, migrate devplan, plan-dev, plandoc, docx plan de desarrollo
   role: specialist
@@ -29,7 +29,7 @@ If that skill is not installed, stop and tell the user to install it (`build/nov
 
 **Supports subcommands:**
 - `/migrate` or `/migrate <endpoint>` — migrate a specific endpoint (default behavior)
-- `/migrate list` — list all endpoints with code status **and live Jira status** (mismatches flagged ⚠️)
+- `/migrate list` — list all endpoints with code status, **live Jira status, QA ticket + its assignee**, and an automatic **reconcile** of the yml's Jira mirror (mismatches flagged ⚠️)
 - `/migrate status <endpoint>` — show phase-level detail for one endpoint
 - `/migrate roadmap` — show the full migration roadmap with priorities and estimates
 - `/migrate scan <endpoint>` — READ-ONLY audit of ONE built endpoint: parity with Java, untested units on its call chain, Jira, CDSI and a ready-for-QA verdict
@@ -68,7 +68,8 @@ SUBCOMMANDS
   /migrate <endpoint>          Migrate an endpoint (default). Reads Java, plans phases, executes
                                domain → repository → service → handler → docs, one branch per phase,
                                apiladas con gh-stack por defecto (sin esperar merges).
-  /migrate list                Table of every endpoint: code status + live Jira status (⚠️ on mismatch).
+  /migrate list                Table of every endpoint: code status + live Jira status + QA ticket/assignee
+                               (⚠️ on mismatch). Always reconciles the yml's Jira mirror; never writes Jira.
   /migrate roadmap             Recommended wave order + effort estimates.
   /migrate scan <endpoint>     Read-only audit of ONE endpoint: parity, tests, Jira, CDSI, QA verdict.
   /migrate scan-all [module]   Project-wide read-only audit: parity, tests, Jira, CDSI, QA verdict (alias: audit).
@@ -121,10 +122,12 @@ After printing, ask what the user wants to do next (list / roadmap / migrate / v
 ## Subcommand: `/migrate list`
 
 Table with the **code status** (from the yml), the **live Jira status** of every ticket, and the
-**CDSI redirect tickets for TEST and UAT** linked to it.
-`list` only reads `.migration-context.yaml` and Jira; it never writes to either. Run the Jira
-read (step 2) on **every** call — never print the table from the file alone, and never reuse a
-Jira status from an earlier call.
+**CDSI redirect tickets for TEST and UAT** linked to it, plus the **QA ticket and who it is
+assigned to**.
+`list` **always reconciles** (step 7): on every call it refreshes the Jira mirror fields in
+`.migration-context.yaml` with what Jira says now. It **never writes to Jira**. Run the Jira reads
+(steps 2-3) on **every** call — never print the table from the file alone, and never reuse a Jira
+value from an earlier call or from the yml mirror.
 
 1. **Read the inventory** (`endpoint_inventory`): id, module, endpoint, HTTP method, `status`,
    `ticket`, `current_phase`, `current_branch`, `complexity`. If the file doesn't exist, tell the
@@ -140,20 +143,50 @@ Jira status from an earlier call.
    `assignee.displayName`, or `sin asignar` when empty. It is the CEB ticket's assignee, not the CDSI's. If the connector is not authorized or the call
    fails, print the table with the Jira column as `n/d`, say so on the first line, and do not
    guess a status.
-3. **Columns**: `#` · Endpoint · HTTP · Code status (yml) · Jira status · Ticket ·
-   Asignado (migración) · CDSI redirect TEST · CDSI redirect UAT · Phase / PR · Complexity. Each CDSI cell is `CDSI-NNN (status)`,
+3. **QA ticket and its assignee** — one more read-only call (the first response lists subtasks
+   without assignee): `searchJiraIssuesUsingJql` with `parent in (<tickets>)` and
+   `fields: ["summary","status","assignee","issuetype","parent"]`. Per endpoint:
+   - **Ticket QA** = the subtask that is **not** type `Bug QA` and whose summary starts with
+     `Certificación QA` or `QA - Ejecución casos de pruebas` (execution/certification). If none
+     exists, the one named `QA - Creación casos de pruebas`, tagged `(casos)`. If several match,
+     list every key. Cell: `CEB-NNNN (status)`; `❌` when the endpoint has none (and is not
+     `not_started`); `—` when not started. Never infer a QA ticket from a name that matches neither.
+   - **QA asignado** = that ticket's `assignee.displayName`, or `sin asignar`.
+   - **Bug QA** subtasks that are not `Finalizada`: not a column; each goes in `Notas` as
+     `CEB-NNNN (status, assignee)` and counts in the summary.
+   A failed call → both cells `n/d`, said on the first line; never guess.
+4. **Columns**: `#` · Endpoint · HTTP · Code status (yml) · Jira status · Ticket ·
+   Asignado (migración) · Ticket QA · QA asignado · CDSI redirect TEST · CDSI redirect UAT ·
+   Phase / PR · Complexity. Each CDSI cell is `CDSI-NNN (status)`,
    `❌` when no ticket is linked, or `—` when the endpoint has not started. Group rows by module with a `n/m done` header.
-4. **Flag every mismatch** between code status and Jira status with a `⚠️` row note (e.g. code
+5. **Flag every mismatch** between code status and Jira status with a `⚠️` row note (e.g. code
    `done` but Jira `Abierta`, or code `in_progress` but Jira `Finalizada`). Also flag with `⚠️`
    an endpoint that is `done`, or whose Jira status is Ready For QA / QA IN PROGRESS / Finalizada,
    and has no CDSI for TEST or for UAT: the redirect cannot be requested without it. Report the
-   mismatches; never edit Jira or the yml to hide them.
-5. **Show QA follow-up in the Phase column** when a QA bug fix is in review (e.g.
+   mismatches; never edit Jira or the yml to hide them. Also flag with `⚠️` a QA ticket that is
+   `Blocked` or `sin asignar` while the endpoint is Ready For QA / QA IN PROGRESS.
+6. **Show QA follow-up in the Phase column** when a QA bug fix is in review (e.g.
    `fix CEB-6842 · #386 → #387`): the yml tracks migration phases, not QA bugs, so a `done`
    endpoint can still have work in flight.
-6. **Summary line**: counts by code status (done / in progress / not started / blocked), by
+7. **Reconcile the yml mirror (ALWAYS, automatic, no confirmation).** After printing the table, for
+   each endpoint compare what Jira returned with the mirror fields in `.migration-context.yaml`
+   and write only the ones that **changed**: `jira_status`, `jira_assignee`, `qa_ticket`,
+   `qa_ticket_status`, `qa_assignee`, `cdsi_test`, `cdsi_uat`, and `jira_synced_at` (only when at
+   least one of the others changed — no churn when nothing changed). Rules:
+   - Writes go **only** to those fields. Never touch `status`, `current_phase`, `current_branch`,
+     `ticket`, `notes`, or any other field, and never write to Jira.
+   - **Fail closed:** a Jira call that failed or returned `n/d` writes nothing for that endpoint;
+     never overwrite a known value with `n/d`.
+   - After writing, re-read the file and confirm it still parses as YAML; if it does not, restore
+     the previous content and say so.
+   - Print a `Reconciliación` list: `#n endpoint: campo antes → después`, or `sin cambios`.
+   - A **code `status` that disagrees with Jira** (step 5's ⚠️) is **not** auto-corrected: Jira
+     says what the ticket is, not what the code is. List it under `Reconciliación` as
+     `requiere decisión` and offer `/migrate status <endpoint>`.
+8. **Summary line**: counts by code status (done / in progress / not started / blocked), by
    Jira status (Finalizada, Ready For QA, QA IN PROGRESS, En curso, Abierta), and how many
-   endpoints lack a CDSI for TEST and for UAT.
+   endpoints lack a CDSI for TEST and for UAT, how many lack a QA ticket or have it unassigned,
+   and open Bug QA subtasks.
 
 **Output format — Markdown, never box-drawing.** Print the result as plain Markdown (NOT inside a
 code fence) so the UI renders real tables: a `###` heading per module with its `n/m done`, then
@@ -164,23 +197,29 @@ list under the summary, not inside the cells. Example:
 
 ### accounts — 3/4 done ✅
 
-| #  | Endpoint        | HTTP | Code       | Jira         | Ticket   | Asignado    | CDSI redirect TEST | CDSI redirect UAT | Phase / PR |
-|----|-----------------|------|------------|--------------|----------|-------------|--------------------|-------------------|------------|
-| 1  | getBalance      | GET  | ✅ done    | Finalizada   | CEB-5479 | Ana Pérez   | CDSI-101 (OK)      | CDSI-102 (OK)     | —          |
-| 2  | getCardHolder   | GET  | ✅ done    | Ready For QA | CEB-5479 | Ana Pérez   | CDSI-103 (OK)      | ❌ ⚠️             | —          |
-| 3  | getCVV2         | GET  | ✅ done    | Abierta ⚠️   | CEB-5480 | sin asignar | ❌ ⚠️              | ❌ ⚠️             | fix #386   |
-| 4  | preventiveBlock | PUT  | 🔄 phase 2 | En curso     | CEB-5602 | Luis Gómez  | —                  | —                 | #95 → #96  |
+| #  | Endpoint        | HTTP | Code       | Jira         | Ticket   | Asignado    | Ticket QA            | QA asignado | CDSI TEST     | CDSI UAT      | Phase / PR |
+|----|-----------------|------|------------|--------------|----------|-------------|----------------------|-------------|---------------|---------------|------------|
+| 1  | getBalance      | GET  | ✅ done    | Finalizada   | CEB-5479 | Ana Pérez   | CEB-5678 (Finalizada)| Rosa Díaz   | CDSI-101 (OK) | CDSI-102 (OK) | —          |
+| 2  | getCardHolder   | GET  | ✅ done    | Ready For QA | CEB-5479 | Ana Pérez   | CEB-6784 (Blocked) ⚠️| sin asignar | CDSI-103 (OK) | ❌ ⚠️         | —          |
+| 3  | getCVV2         | GET  | ✅ done    | Abierta ⚠️   | CEB-5480 | sin asignar | ❌                   | —           | ❌ ⚠️         | ❌ ⚠️         | fix #386   |
+| 4  | preventiveBlock | PUT  | 🔄 phase 2 | En curso     | CEB-5602 | Luis Gómez  | —                    | —           | —             | —             | #95 → #96  |
 
 **Resumen** — Code: ✅ 3 · 🔄 1 · ❌ 0 · 🚫 0 · Jira: Finalizada 1 · Ready For QA 1 · Abierta 1 ·
-En curso 1 · Sin CDSI redirect: TEST 1, UAT 2
+En curso 1 · Sin CDSI redirect: TEST 1, UAT 2 · Sin ticket QA 1 · QA sin asignar 1 · Bug QA abiertos 1
 
 **Notas**
-- ⚠️ #2 getCardHolder: Ready For QA without CDSI redirect for UAT
-- ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no CDSI redirect for TEST or UAT
+- ⚠️ #2 getCardHolder: Ready For QA, QA ticket `Blocked` and unassigned; no CDSI redirect for UAT
+- ⚠️ #3 getCVV2: code `done` but Jira `Abierta`; no QA ticket; no CDSI redirect for TEST or UAT
+- Bug QA abierto: CEB-6786 (Tareas por hacer, sin asignar) — endpoint #2
 
-**Keeping the yml current** is a separate, explicit step: `/migrate status <endpoint>` updates
-it only when a phase changed; anything else (QA state, open PRs, notes) is edited by hand. After
-the table, if there are mismatches, offer to reconcile — and **ask before editing** the yml.
+**Reconciliación (yml)**
+- #1 getBalance: `qa_assignee` sin asignar → Rosa Díaz
+- #2 getCardHolder: `qa_ticket_status` En curso → Blocked
+- #3 getCVV2: requiere decisión — code `done` vs Jira `Abierta` (`/migrate status getCVV2`)
+
+**The yml mirror** is refreshed by step 7 on every call (Jira fields only, never Jira itself). Anything
+else — the code `status`, the phase, notes, open PRs — keeps being edited by `/migrate status
+<endpoint>` or by hand, because Jira cannot tell what the code is.
 
 **Jira facts to respect**: a `Finalizada` ticket has no transitions and cannot be reopened
 through the connector; moving a parent to `Ready For QA` is transition `2` ("Listo para QA");
@@ -188,7 +227,7 @@ bug subtasks of type `Bug QA` start with transition `2` ("Empezar").
 
 **After displaying**: ask if the user wants to:
 1. Start migrating a specific endpoint
-2. Reconcile the yml with the mismatches shown (asks before writing)
+2. Resolve a `requiere decisión` item (`/migrate status <endpoint>`)
 3. View the roadmap
 
 ---
