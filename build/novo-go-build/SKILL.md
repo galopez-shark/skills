@@ -1,10 +1,10 @@
 ---
 name: novo-go-build
-description: "Builds something NEW in a Go service on go-bricks from a Jira ticket with acceptance criteria, using the same construction rules as the legacy migrations (phased, stacked PRs, QueryBuilder, response funnel, one use-case test per unit, self-review gate at every phase end). The ticket is the gate: text, documents or an interview are only context. Subcommands: /build <ticket> (default: full flow), /build doc <ticket> (Word/PDF for QA), /build status [ticket], /build help. Reads Jira, never writes to it. Use for a new feature or endpoint with no Java behind it; for a legacy endpoint use /migrate."
+description: "Builds something NEW in a Go service on go-bricks from a Jira ticket whose acceptance criteria, integrations and test cases are clear and approved (it asks about anything unclear, never assumes), using the same construction rules as the legacy migrations (phased, stacked PRs, QueryBuilder, response funnel, one use-case test per unit, self-review gate at every phase end). The ticket is the gate: text, documents or an interview are only context. Subcommands: /build <ticket> (default: full flow), /build doc <ticket> (Word/PDF for QA), /build status [ticket], /build help. Reads Jira, never writes to it. Use for a new feature or endpoint with no Java behind it; for a legacy endpoint use /migrate."
 license: MIT
 metadata:
   author: galopez-shark
-  version: "1.0.0"
+  version: "1.1.0"
   domain: engineering
   triggers: build, novo-go-build, /build, new feature, nuevo requerimiento, construir, build ticket, build doc, build status
   role: specialist
@@ -65,7 +65,8 @@ build — build something NEW in Go (go-bricks) from a Jira ticket, to the migra
   /build help            This card.
 
 KEY RULES
-  • The ticket's acceptance criteria are the spec, numbered CA-NN. No criteria → no code.
+  • The spec is three approved, clear things: acceptance criteria (CA-NN), integrations (IN-NN) and
+    test cases (TC-NN). Any of them missing or unclear → it asks; nothing is assumed. No approval → no code.
   • Text, documents and questions are context; they never replace the ticket.
   • Jira is read-only. DDL is drafted and flagged for a CDPP ticket, never executed.
   • Same construction rules as /migrate (novo-go-construction-rules): ≤400 new lines / ≤10 files per
@@ -97,7 +98,13 @@ Ask in **rounds**, not one long form:
 Accept the ticket as a key (`CEB-1234`) or a Jira URL. Anything else the user adds (free text, a
 Word/PDF/Confluence page, answers to questions) is **context for this ticket**.
 
-### STEP 0 — Gate: the ticket and its acceptance criteria (MANDATORY)
+### STEP 0 — Gate: criteria, integrations and test cases, clear and approved (MANDATORY)
+
+Reading the ticket is not enough. **No code, design or plan starts until three things exist, are
+clear and are approved by the user:** (A) acceptance criteria, (B) integrations, (C) test cases.
+**If anything is unclear, missing or ambiguous, ASK. Never assume, never infer, never fill a gap
+with a "reasonable default".** Questions follow the Question protocol, but the gate itself is not
+optional and "the task looks small" is not a reason to skip a question.
 
 1. If no ticket was given, ask for it. Free text alone is not enough to start building.
 2. Read it with `getJiraIssue`: summary, description, issue type, status, assignee, linked issues,
@@ -110,6 +117,29 @@ Word/PDF/Confluence page, answers to questions) is **context for this ticket**.
    al ticket (el skill no escribe en Jira) y vuelve a ejecutar `/build {TICKET}`." Offer to draft
    criteria text **in the chat** for the user to paste into Jira; do not continue to code.
 5. Print the numbered `CA-NN` list and the ticket facts, and confirm the list is the ticket's.
+6. **(B) Integrations — clear.** Extract every integration the work touches from the ticket, its
+   links and its Confluence pages: external services/APIs (name, endpoint or operation, request and
+   response contract, auth, timeouts and failure behavior), messaging (exchange/queue/routing key/
+   event type), databases and tables, files, and other modules. Print them as a table
+   (`IN-01`, `IN-02`, …: integration, direction, contract source, failure behavior). A row with a
+   blank, vague ("el servicio de X") or contradictory cell is **unclear → ask**. No integration at
+   all is a valid answer only when the user says so; record "sin integraciones (confirmado)".
+7. **(C) Test cases — clear.** Extract the test cases from the ticket (a *Casos de prueba* section,
+   scenarios, QA subtasks, Gherkin). Number them `TC-01`, `TC-02`, … **verbatim** and map each to the
+   `CA-NN` it proves. Rules: every `CA-NN` has at least one `TC-NN` covering its success path **and**
+   its failure path; a test case with no stated input/expected outcome is **unclear → ask**; a
+   `CA-NN` with no test case is a gap → ask for it (the skill may propose cases in the chat, they
+   count only once the user approves them).
+8. **Ask until clear.** Every unclear or missing item from (A), (B) and (C) goes into question
+   rounds (Question protocol: read first, frontier only, max 4 per round, recommended option first).
+   An answer the user gives in chat is recorded as **"confirmado por el usuario (no está en el
+   ticket)"**, and the skill tells them to add it to the ticket (it never writes to Jira). "No sé"
+   leaves the item `pendiente` and **the gate stays closed**: say exactly what is missing and who
+   can supply it, and stop. Do not move to STEP 1 with a `pendiente` in A, B or C.
+9. **Approval.** Print one summary — the `CA-NN`, `IN-NN` and `TC-NN` lists, the Jira status of the
+   ticket, and the items confirmed by the user outside the ticket — and ask for a single explicit
+   "aprobado". Silence, "ok" to something else, or approving only part of it is not approval.
+   Record the approval (and its date) in the build-plan file once it exists.
 
 ### STEP 1 — Understand the target (read-only)
 
@@ -122,7 +152,8 @@ Word/PDF/Confluence page, answers to questions) is **context for this ticket**.
 
 ### STEP 2 — Clarify in rounds (Question protocol)
 
-List every gap the criteria leave open and ask only what only the user knows: error cases and their
+STEP 0 closed A, B and C. Here, list every *remaining* gap (design-level) and ask only what only the
+user knows: error cases and their
 response codes/messages, validation order, authentication and authorization, idempotency, money-path
 decisions (movement, reversal, balance), external services and their failure behavior, data that must
 persist. Each answer becomes either a clarification of a `CA-NN` or a numbered **assumption `S-NN`**
@@ -142,11 +173,14 @@ Present, and get approved as **exact text**:
    the code is built against that schema and the PR says it depends on it.
 3. **Phase roadmap:** read `~/.claude/skills/novo-go-construction-rules/references/phase-planning.md`
    **in full** and produce the roadmap it requires (caps, one branch per phase, stacked).
-4. **Coverage table:** `CA-NN` → phase → test(s) planned. A criterion with no planned test blocks the plan.
+4. **Coverage table:** `CA-NN` → `TC-NN` → phase → test(s) planned, plus every `IN-NN` → the layer
+   that calls it and the test that fakes it at the boundary. A criterion with no planned test, a test
+   case with no planned test, or an integration with no boundary test blocks the plan.
 
 Write the approved plan to `docs/builds/{TICKET}.build-plan.yaml` (local, git-ignored via
 `.git/info/exclude`, verified with `git check-ignore`): ticket, `CA-NN` list, `S-NN` assumptions, design
-summary, phases (name, branch, PR, status), DDL files, DDL ticket (CDPP) once the user gives it.
+summary, `IN-NN` integrations, `TC-NN` test cases, the gate approval (date and what was confirmed
+outside the ticket), phases (name, branch, PR, status), DDL files, DDL ticket (CDPP) once the user gives it.
 
 ### STEP 4 — Build phase by phase (stacked by default)
 
@@ -170,9 +204,10 @@ commented on GitHub without the exact text/command approved (the publish guard h
 
 ### STEP 5 — Close
 
-1. **Acceptance coverage gate (MANDATORY):** print the `CA-NN` table — criterion → test(s) → observable
-   outcome asserted. A `CA-NN` with no test, or a test that only executes lines, fails closed: write it
-   before declaring the work done.
+1. **Acceptance coverage gate (MANDATORY):** print the `CA-NN` table — criterion → `TC-NN` → test(s) →
+   observable outcome asserted — and the `IN-NN` table — integration → boundary test (success and
+   failure). A `CA-NN` or `TC-NN` with no test, an integration with no boundary test, or a test that
+   only executes lines, fails closed: write it before declaring the work done.
 2. Print the PRs of the stack, the `S-NN` assumptions, and the DDL / CDPP dependency if any.
 3. Suggest `/go-dev-technical review <PR_URL>` on each PR and `/build doc {TICKET}`.
 4. Print the completion checklist.
@@ -222,18 +257,24 @@ not approving anything that gets published or committed — those need the exact
 | Step | Evidence |
 |---|---|
 | Ticket read and criteria numbered `CA-NN` | the ticket key and the `CA-NN` list |
-| Gate: criteria exist | the section found in the ticket, or the stop message |
+| Gate A: criteria exist and are clear | the section found in the ticket, or the stop message |
+| Gate B: integrations listed and clear | the `IN-NN` table, or "sin integraciones (confirmado)" |
+| Gate C: test cases listed, every `CA-NN` covered, clear | the `TC-NN` → `CA-NN` map |
+| Unclear items asked, none left `pendiente` | the questions asked and the answers; items outside the ticket |
+| Gate approved by the user | the explicit "aprobado" and its date |
 | Repo conventions read, similar endpoint chosen | the endpoint used as template |
 | Gaps asked in rounds, `S-NN` recorded | the decisions list the user confirmed |
 | Design, DDL (if any) and roadmap approved as exact text | the user's approval |
 | Construction rules read per phase | the files read from `novo-go-construction-rules` |
 | Each phase closed with its gates | self-review result and the use-case matrix |
-| Acceptance coverage gate | the `CA-NN` → test table |
+| Acceptance coverage gate | the `CA-NN` → `TC-NN` → test table and the `IN-NN` → boundary test table |
 | Nothing written to Jira; nothing published unapproved | the commands the guard let through |
 
 ## Working if (how the user can tell the run went well)
 
-- It stopped at the gate when the ticket had no criteria, instead of building from free text.
+- It stopped at the gate when the ticket had no criteria, integrations or test cases that were clear,
+  and asked about each gap instead of assuming or building from free text.
+- It printed the `CA-NN`, `IN-NN` and `TC-NN` lists and waited for an explicit "aprobado".
 - The plan, the DDL flag and every `S-NN` assumption were approved **before** the first line of code.
 - Each phase stayed within the caps and ended with its gates; the stack reviews in parallel.
 - Every `CA-NN` has a test that asserts an observable outcome.
