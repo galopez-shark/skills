@@ -34,6 +34,7 @@ feedback a pull request receives.
 | [`novo-legacy-migration-context`](legacy/novo-legacy-migration-context/SKILL.md) | Establishes **what** is being migrated: source repositories, properties, database, authentication, external services and the complete endpoint inventory (`.migration-context.yaml`). | `/novo-legacy-migration-context` |
 | [`novo-legacy-migration-endpoint`](legacy/novo-legacy-migration-endpoint/SKILL.md) | Migrates **one endpoint** to Go phase by phase, and produces its Jira and QA documentation. | `/migrate` |
 | [`go-dev-technical`](legacy/go-dev-technical/SKILL.md) | **Validates** go-bricks services and pull requests, and attends PR feedback. | `/go-dev-technical` |
+| [`novo-go-build`](build/novo-go-build/SKILL.md) | Builds something **new** in Go on go-bricks from a Jira ticket with acceptance criteria, with the same construction rules as the migrations. Jira is read-only. | `/build` |
 | [`novo-go-construction-rules`](build/novo-go-construction-rules/SKILL.md) | **Shared construction rules**: phase flow, build-to-review standard, implementation, testing, handler and data-access patterns, SDLC, PR template. Read on demand by `/migrate` (and `/build`); it has no command of its own. | — |
 
 Each skill declares its own version in the `metadata.version` field of its `SKILL.md`.
@@ -57,6 +58,8 @@ Each skill declares its own version in the `metadata.version` field of its `SKIL
               │
               ▼
  /migrate migrate-doc-plan <ep>        Word + PDF Plan de Desarrollo for QA certification
+
+ For NEW work (no Java behind it):  /build <ticket>  ·  /build doc <ticket>
 ```
 
 The steps are independent: any command can be run on its own once `.migration-context.yaml` exists.
@@ -108,6 +111,21 @@ test cases. The `EST-NN` identifiers are therefore identical in Jira and in the 
 **Protected Jira update.** `mtp` reads the current description, stores a backup, preserves any content that is not
 part of the plan, shows the diff and writes only after that diff is approved. A second run replaces the plan block
 instead of duplicating it.
+
+### `/build` — `novo-go-build`
+
+For new work with no Java behind it. The **ticket is the gate**: its acceptance criteria, numbered `CA-NN`, are the
+specification. Free text, documents and questions are only context. Jira is read-only.
+
+| Subcommand | Description |
+|---|---|
+| `<ticket>` | Full flow: gate on the acceptance criteria → understand the repo → clarify in rounds (`S-NN` assumptions) → approved design, DDL flag and phase plan → phased code with stacked PRs and one use-case test per unit → acceptance coverage gate. |
+| `doc <ticket>` | Word + PDF Plan de Desarrollo for QA, in the *solo certificación* shape of `mdp`. |
+| `status [ticket]` | Phases, PRs and `CA-NN` coverage. Read-only. |
+| `help` | Subcommands and key rules. |
+
+Database changes are **drafted** to the NovoPayment standard and flagged for a CDPP ticket; they are never executed.
+The plan is kept in a local, git-ignored `docs/builds/<TICKET>.build-plan.yaml`.
 
 ### `/go-dev-technical` — `go-dev-technical`
 
@@ -179,7 +197,8 @@ cp -R legacy/* build/* ~/.claude/skills/
 cp -R legacy/novo-legacy-migration-context  <repo>/.claude/skills/
 cp -R legacy/novo-legacy-migration-endpoint <repo>/.claude/skills/
 cp -R legacy/go-dev-technical               <repo>/.claude/skills/
-cp -R build/novo-go-construction-rules      <repo>/.claude/skills/   # required by /migrate
+cp -R build/novo-go-construction-rules      <repo>/.claude/skills/   # required by /migrate and /build
+cp -R build/novo-go-build                   <repo>/.claude/skills/
 ```
 
 Open a **new** Claude Code session afterwards. Skills are loaded when a session starts; an already open session keeps
@@ -189,7 +208,7 @@ the version it loaded.
 
 ```bash
 rsync -a --delete legacy/<skill>/ ~/.claude/skills/<skill>/
-rsync -a --delete build/<skill>/  ~/.claude/skills/<skill>/    # novo-go-construction-rules
+rsync -a --delete build/<skill>/  ~/.claude/skills/<skill>/    # novo-go-construction-rules, novo-go-build
 ```
 
 `/migrate` stops with a clear message when `novo-go-construction-rules` is not installed beside it.
@@ -218,6 +237,7 @@ rsync -a --delete build/<skill>/  ~/.claude/skills/<skill>/    # novo-go-constru
 
 ```
 build/
+├── novo-go-build/                    SKILL.md, hooks/ (publish guard)
 └── novo-go-construction-rules/       SKILL.md, references/ (phase flow, standards and patterns shared by /migrate and /build)
 legacy/
 ├── novo-legacy-migration-context/    SKILL.md, hooks/
