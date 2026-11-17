@@ -114,12 +114,13 @@ instead of duplicating it.
 
 ### `/build` — `novo-go-build`
 
-For new work with no Java behind it. The **ticket is the gate**: its acceptance criteria, numbered `CA-NN`, are the
-specification. Free text, documents and questions are only context. Jira is read-only.
+For new work with no Java behind it. The **ticket is the gate**: its acceptance criteria (`CA-NN`), integrations
+(`IN-NN`) and test cases (`TC-NN`) must be present, clear and explicitly approved by you before any design or code.
+Anything unclear is asked, never assumed. Free text, documents and questions are only context. Jira is read-only.
 
 | Subcommand | Description |
 |---|---|
-| `<ticket>` | Full flow: gate on the acceptance criteria → understand the repo → clarify in rounds (`S-NN` assumptions) → approved design, DDL flag and phase plan → phased code with stacked PRs and one use-case test per unit → acceptance coverage gate. |
+| `<ticket>` | Full flow: gate on approved criteria, integrations and test cases → understand the repo → clarify in rounds (`S-NN` assumptions) → approved design, DDL flag and phase plan → phased code with stacked PRs and one use-case test per unit → acceptance coverage gate. |
 | `doc <ticket>` | Word + PDF Plan de Desarrollo for QA, in the *solo certificación* shape of `mdp`. |
 | `status [ticket]` | Phases, PRs and `CA-NN` coverage. Read-only. |
 | `help` | Subcommands and key rules. |
