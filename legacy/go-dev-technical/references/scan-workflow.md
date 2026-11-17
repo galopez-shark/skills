@@ -251,6 +251,8 @@ Rules for the roadmap:
   code — it produces the plan. Branch creation follows the `/migrate` flow (ask for
   the Jira ticket, `git checkout main && git pull`, one branch per phase).
 
-File name: `scan-{path-slug}-audit.md` — same temp-dir rule as the review report.
+File name: `scan-{path-slug}-audit.md` — same temp-dir rule as the review report, and the same
+rules: **always overwrite** it on every run (fixed name, no variants), then **always run**
+`code "<abs-path>"` and check the result (`open` as fallback), and print the command verbatim.
 
 ---

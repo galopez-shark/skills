@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.25.0"
+  version: "2.26.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -64,7 +64,9 @@ cannot need it.
 
 6. **No silent skips.** Every subcommand ends by printing its checklist of mandatory steps with
    the evidence of each (review: Fast-path rows 1-10 and checks 1-22 as run/N-A-with-reason;
-   scan: its phases; pr-fix: the table in `references/pr-fix-workflow.md`). A step without
+   scan: its phases; pr-fix: the table in `references/pr-fix-workflow.md`). For review and scan,
+   the rows **report file overwritten** and **`code` launched** (command and its result) are part
+   of it. A step without
    evidence is `❌ NO EJECUTADO`, never omitted and never `✅`. Anything published to GitHub
    needs the user's approval of the **exact text** — approving a plan is not approving the text.
 
@@ -195,7 +197,8 @@ SUBCOMANDOS
                                   idioms de Go (Uber). Todo hallazgo LLEVA CONTEO.
       Fase 4  Descubrimiento      que ofrece go-bricks que el PR no esta usando
       Fase 5  Scope y evidencia   un solo concern, todo hallazgo con file:line
-      Salida: <tmp>/pr-<N>-review.md  (markdown pegable en el PR)
+      Salida: <tmp>/pr-<N>-review.md  (markdown pegable en el PR). SIEMPRE se sobrescribe
+              en cada corrida y SIEMPRE se lanza `code "<ruta>"` para abrirlo.
 
   /go-dev-technical scan <path> [LANG]
       Auditoria del codigo existente + ROADMAP de remediacion ejecutable.
@@ -206,7 +209,7 @@ SUBCOMANDOS
         - features de go-bricks sin usar, con donde aplicarlas
         - roadmap por fases: <=400 lineas y <=10 files por fase, una rama por
           fase desde main, prioridad P0..P4, dependencias y diferidos
-      Salida: <tmp>/scan-<path>-audit.md
+      Salida: <tmp>/scan-<path>-audit.md  (misma regla: sobrescribe y abre con `code`)
 
   /go-dev-technical pr-fix [PR_URL]
       Atiende el feedback de un PR (CodeRabbit, reviewers, CI caido). Pide el PR.
@@ -3337,16 +3340,20 @@ Target path (in order of preference):
    (e.g. `.../scratchpad/pr-{PR_NUMBER}-review.md`) — preferred.
 2. Otherwise the OS temp dir: `${TMPDIR:-/tmp}/pr-{PR_NUMBER}-review.md`.
 
-**Steps**:
+**Steps** (every execution, no exceptions — a re-run of the same PR included):
 1. Resolve the temp dir (scratchpad if available, else `$TMPDIR`/`/tmp`).
-2. Write the full GFM report to `<tempdir>/pr-{PR_NUMBER}-review.md`.
-3. **Try to open the file** for the user by running `code "<abs-path>"` (VS Code).
-   Whether or not that succeeds, the agent's chat response **MUST ALWAYS include the
-   open command verbatim** — `code "<abs-path>"` — plus a clickable `file://<abs-path>`
-   markdown link, so the user can open it in one click even when `code` is not on PATH.
-   Never leave only the bare path: the copy-paste command is mandatory in every review
-   response. (If `code` isn't available, offer `open "<abs-path>"` on macOS as the
-   fallback, but the `code` command stays in the message.)
+2. **Always OVERWRITE** `<tempdir>/pr-{PR_NUMBER}-review.md` with the full GFM report of THIS run.
+   The file name is fixed: never append, never merge with the previous report, never create a
+   variant (`-v2`, `-new`, a timestamp), never skip the write because the file already exists, and
+   never reuse an earlier report's content. Write with the Write tool (full replace), not an edit.
+3. **ALWAYS launch the open command, then check it.** Run `code "<abs-path>"` in Bash on every
+   execution, even when the file was already open from a previous run (VS Code reloads the
+   overwritten file). Check the result: if `code` is not found or exits non-zero, run
+   `open "<abs-path>"` (macOS) and say which one worked; if neither works, say so — never claim
+   the file was opened without having run the command.
+4. The chat response **MUST ALWAYS include the open command verbatim** — `code "<abs-path>"` — plus
+   a clickable `file://<abs-path>` markdown link, so the user can open it in one click even when
+   the command failed. Never leave only the bare path.
 
 **Never** write review files inside the reviewed repo, and never `git add`/commit
 them. (This is distinct from PR *description* text, which is delivered inline in
