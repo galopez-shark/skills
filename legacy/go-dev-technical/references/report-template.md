@@ -33,6 +33,10 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 
 📋 **{count} archivos** | **+{prodLOC} prod / +{testLOC} test líneas** (gate ≤400 sobre prod) | **Riesgo**: {ALTO/MEDIO/BAJO} | **go-bricks**: v{version}
 
+{Si el Step 0.5c encontró conflictos, hilos sin resolver o CHANGES_REQUESTED, aquí va PRIMERO el bloque
+⛔ **BLOQUEANTE — el PR no puede mergearse todavía** exactamente como lo define el Step 0.5c; si no hay
+nada abierto, una línea `✅ Sin conflictos ni hilos abiertos`; si no se pudo leer, `⚠️ NO VERIFICADO`.}
+
 ### ❌ Bloqueadores
 
 > Ninguno / o lista:
@@ -219,5 +223,5 @@ Tolerado a propósito (duplicación accidental, no misma razón de cambio): {lis
 
 </details>
 
-**Veredicto**: ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
+**Veredicto** (nunca ✅ con el bloque ⛔ presente): ✅ Aprobado / ⚠️ No verificado ({razón}) / ❌ {N} bloqueadores pendientes
 ```

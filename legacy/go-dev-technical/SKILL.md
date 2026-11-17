@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.26.0"
+  version: "2.27.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -45,6 +45,7 @@ cannot need it.
 | 1 | Resolve the PR ref (`git fetch origin refs/pull/<N>/head`) | seconds | A wrong branch means a wrong review. Never guess |
 | 2 | **Phase 0** — worktree, `build` / `vet` / `test -cover` / `golangci-lint` / `go fix` | minutes | The toolchain finds what reading cannot. Never opine on an uncompiled diff |
 | 2b | **Step 0.5b mergeability** — `git merge-tree` against the base, commits behind | seconds | A PR that conflicts cannot land, however clean its code. Catches stacked PRs whose parent was squash-merged |
+| 2c | **Step 0.5c open feedback** — unresolved review threads (CodeRabbit + humans), `CHANGES_REQUESTED` | seconds | Unclosed feedback means the PR is not ready. If any exists, the report opens with a ⛔ BLOQUEANTE block |
 | 3 | **Step 0.6 triage** — what does the diff actually contain? | 5 s | Marks whole check families N/A *with a reason*, so nothing expensive runs pointlessly |
 | 4 | **Step 0.7 sweep** — one pass, all deterministic patterns → `/tmp/rv-sweep.txt` | one tree walk | Replaces ~83 separate greps. Every later check reads this file instead of re-scanning |
 | 5 | **Blockers** from the sweep: SQL injection → stored procs → layer breaks → error/leak/concurrency → 21a idioms | minutes | Fail fast. If it must never merge, say so before spending effort on style |
@@ -65,8 +66,8 @@ cannot need it.
 6. **No silent skips.** Every subcommand ends by printing its checklist of mandatory steps with
    the evidence of each (review: Fast-path rows 1-10 and checks 1-22 as run/N-A-with-reason;
    scan: its phases; pr-fix: the table in `references/pr-fix-workflow.md`). For review and scan,
-   the rows **report file overwritten** and **`code` launched** (command and its result) are part
-   of it. A step without
+   the rows **report file overwritten**, **`code` launched** (command and its result) and
+   **open threads / conflicts checked** (Step 0.5c: counts, or `NO VERIFICADO`) are part of it. A step without
    evidence is `❌ NO EJECUTADO`, never omitted and never `✅`. Anything published to GitHub
    needs the user's approval of the **exact text** — approving a plan is not approving the text.
 
@@ -187,6 +188,8 @@ SUBCOMANDOS
       Revision completa de un PR. Idioma por defecto: ES (pasar EN para ingles).
       Fase 0  Base de evidencia   build + vet + test -cover + golangci-lint + go fix
                                   worktree aislado, comparado contra origin/main
+      Fase 0b Mergeabilidad       conflictos + hilos sin resolver (CodeRabbit/humanos):
+                                  si hay, el reporte abre con ⛔ BLOQUEANTE
       Fase 1  NKH1                tamano, titulo, PCI/secretos, bump de version
       Fase 2  go-bricks           tipos reinventados, SQL safety, capas, BUS,
                                   patrones DB/handler, reuso, ubicacion de archivos
@@ -601,6 +604,39 @@ git merge-tree --write-tree --name-only origin/$BASE pr-<N>
 **Size is measured with a tree diff when the parent was squash-merged.** In that case
 `origin/$BASE...pr-<N>` (three dots) re-counts the parent's already-merged changes; use
 `git diff origin/$BASE pr-<N>` (two dots) for the PR's real increment, and say which one you used.
+
+### Step 0.5c — Open feedback: unresolved threads (CodeRabbit and humans) (MANDATORY)
+
+A PR with conflicts or with review threads nobody closed is **not ready to merge**, whatever the
+code looks like. Check both on EVERY review, first-time or re-review:
+
+```bash
+gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){
+  mergeable reviewDecision
+  reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line
+    comments(first:1){nodes{author{login} body}}}}}}}' -f o=<owner> -f r=<repo> -F n=<N>
+```
+
+Paginate while `hasNextPage`. Count the threads with `isResolved: false`, split by author: **CodeRabbit**
+(`coderabbitai[bot]`), other bots, and humans. An `isOutdated` thread that is still unresolved
+counts (say it is outdated: the line moved, but nobody closed or answered it).
+
+- **Any unresolved thread, or `mergeable: CONFLICTING` / `CONFLICT` lines from Step 0.5b →
+  BLOCKER.** The review report opens with this block, before any other finding, in this exact
+  shape (translate with `LANG`):
+
+  > ⛔ **BLOQUEANTE — el PR no puede mergearse todavía**
+  > - Conflictos con `{base}`: {n archivos | ninguno}
+  > - Hilos sin resolver: **{n}** (CodeRabbit {a}, humanos {b}, otros {c}) — {a lista `file:line` con 1 línea cada uno}
+  > Cierra o responde cada hilo y resuelve los conflictos; después vuelve a correr la revisión.
+  > Para atenderlos: `/go-dev-technical pr-fix <PR>`.
+
+- `reviewDecision: CHANGES_REQUESTED` → also BLOCKER, with the reviewer named.
+- Zero unresolved threads and no conflicts → one line `✅ Sin conflictos ni hilos abiertos`.
+- `gh` cannot read threads → ⚠️ `NO VERIFICADO`, **never ✅**; the report says so at the top.
+
+This blocker does not replace the code findings: still run the rest of the review and report
+them below the block. The verdict line cannot be "listo para mergear" while this block is present.
 
 ### Step 0.6 — Triage: decide which check families can apply (MANDATORY, 5 seconds)
 
