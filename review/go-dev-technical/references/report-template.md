@@ -31,6 +31,8 @@ PR comment. It MUST render correctly in GitHub-Flavored Markdown (GFM):
 ```markdown
 ## Revisión PR #{number} — {title}
 
+**Modo**: {Migración | Build | Estándar} — {una línea con por qué}
+
 📋 **{count} archivos** | **+{prodLOC} prod / +{testLOC} test líneas** (gate ≤400 sobre prod) | **Riesgo**: {ALTO/MEDIO/BAJO} | **go-bricks**: v{version}
 
 {Si el Step 0.5c encontró conflictos, hilos sin resolver o CHANGES_REQUESTED, aquí va PRIMERO el bloque

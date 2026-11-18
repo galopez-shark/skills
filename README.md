@@ -33,7 +33,7 @@ feedback a pull request receives.
 |---|---|---|
 | [`novo-legacy-migration-context`](legacy/novo-legacy-migration-context/SKILL.md) | Establishes **what** is being migrated: source repositories, properties, database, authentication, external services and the complete endpoint inventory (`.migration-context.yaml`). | `/novo-legacy-migration-context` |
 | [`novo-legacy-migration-endpoint`](legacy/novo-legacy-migration-endpoint/SKILL.md) | Migrates **one endpoint** to Go phase by phase, and produces its Jira and QA documentation. | `/migrate` |
-| [`go-dev-technical`](legacy/go-dev-technical/SKILL.md) | **Validates** go-bricks services and pull requests, and attends PR feedback. | `/go-dev-technical` |
+| [`go-dev-technical`](review/go-dev-technical/SKILL.md) | **Validates** any go-bricks service or pull request (new work, fixes or migrations) and attends PR feedback. Not tied to a migration: Java-parity rules apply only when the PR is a migrated endpoint. | `/go-dev-technical` |
 | [`novo-go-build`](build/novo-go-build/SKILL.md) | Builds something **new** in Go on go-bricks from a Jira ticket with acceptance criteria, with the same construction rules as the migrations. Jira is read-only. | `/build` |
 | [`novo-go-construction-rules`](build/novo-go-construction-rules/SKILL.md) | **Shared construction rules**: phase flow, build-to-review standard, implementation, testing, handler and data-access patterns, SDLC, PR template. Read on demand by `/migrate` (and `/build`); it has no command of its own. | — |
 
@@ -68,7 +68,7 @@ The steps are independent: any command can be run on its own once `.migration-co
 
 ```bash
 # 1. Install (user level) and open a NEW Claude Code session
-cp -R legacy/* build/* ~/.claude/skills/
+cp -R legacy/* build/* review/* ~/.claude/skills/
 
 # 2. In the Go target repository
 /novo-legacy-migration-context            # one-time project context
@@ -192,12 +192,12 @@ Copy the **complete** skill folders, including `hooks/`, `references/` and `asse
 
 ```bash
 # User level — recommended (the hook's fallback path assumes this location)
-cp -R legacy/* build/* ~/.claude/skills/
+cp -R legacy/* build/* review/* ~/.claude/skills/
 
 # Project level — shared through the target repository
 cp -R legacy/novo-legacy-migration-context  <repo>/.claude/skills/
 cp -R legacy/novo-legacy-migration-endpoint <repo>/.claude/skills/
-cp -R legacy/go-dev-technical               <repo>/.claude/skills/
+cp -R review/go-dev-technical               <repo>/.claude/skills/
 cp -R build/novo-go-construction-rules      <repo>/.claude/skills/   # required by /migrate and /build
 cp -R build/novo-go-build                   <repo>/.claude/skills/
 ```
@@ -210,6 +210,7 @@ the version it loaded.
 ```bash
 rsync -a --delete legacy/<skill>/ ~/.claude/skills/<skill>/
 rsync -a --delete build/<skill>/  ~/.claude/skills/<skill>/    # novo-go-construction-rules, novo-go-build
+rsync -a --delete review/<skill>/ ~/.claude/skills/<skill>/    # go-dev-technical
 ```
 
 `/migrate` stops with a clear message when `novo-go-construction-rules` is not installed beside it.
@@ -242,9 +243,11 @@ build/
 └── novo-go-construction-rules/       SKILL.md, references/ (phase flow, standards and patterns shared by /migrate and /build)
 legacy/
 ├── novo-legacy-migration-context/    SKILL.md, hooks/
-├── novo-legacy-migration-endpoint/   SKILL.md, hooks/, assets/ (Plan de Desarrollo template and guide),
-│                                     references/ (per-subcommand detail, loaded on demand)
-└── go-dev-technical/                 SKILL.md, hooks/, references/ (report template, glossary, scan workflow, pr-fix workflow)
+└── novo-legacy-migration-endpoint/   SKILL.md, hooks/, assets/ (Plan de Desarrollo template and guide),
+                                      references/ (per-subcommand detail, loaded on demand)
+review/
+└── go-dev-technical/                 SKILL.md, hooks/, references/ (report template, glossary, scan workflow, pr-fix workflow);
+                                      independent of migrations
 ```
 
 ## Upstream watch
