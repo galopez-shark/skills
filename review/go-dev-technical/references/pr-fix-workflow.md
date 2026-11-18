@@ -142,9 +142,10 @@ with the user**. For each item, before asking, gather evidence:
 
 1. Read the code at `file:line` on the PR head (the comment may be stale).
 2. Check project memory (`MEMORY.md` + linked files), the repo `CLAUDE.md`,
-   `.migration-context.yaml` and, for migrations, the Java source the Go code must mirror.
-   **Legacy parity beats aesthetics**: a behaviour that replicates the Java contract is
-   documented and the comment is rejected with that evidence.
+   `.migration-context.yaml` (when it exists) and, **only in Migration mode** (see `SKILL.md`
+   "Mode"), the Java source the Go code must mirror. In Migration mode **legacy parity beats
+   aesthetics**: a behaviour that replicates the Java contract is documented and the comment is
+   rejected with that evidence. In Build and Standard mode there is no parity exemption.
 3. Check the go-bricks rules in this skill (checks 1-21) — if the comment asks for something
    the framework or these rules contradict, say which rule.
 
@@ -185,7 +186,7 @@ Hard rules:
 - One concern → one commit when the fixes are unrelated; otherwise a single
   `fix: address review feedback` commit. Subject ≤72 chars, lowercase `type: desc`, **no
   ticket in the title**; body lists what was addressed and ends with `Refs: <TICKET>`.
-- **Every fix must meet the same code standards as the migration itself** — a review comment
+- **Every fix must meet the same code standards as the original work (new, fix or migration)** — a review comment
   is never a license to write lower-quality code. Source of truth: the `go-dev-technical`
   checks (this skill) for *what* the standard is, and `novo-go-construction-rules`
   (`build-to-review-standard.md` + `implementation-rules.md`) for *how to write it*. Do not
@@ -201,11 +202,11 @@ Hard rules:
     `queries.go`; filtering in SQL, not in memory; no stored procs.
   - **Bus contracts:** exchange/queue/routing-key/`EventType` copied from the counterpart,
     never retyped; events via outbox in the same tx, not a compensation call.
-  - **Parity:** error codes/messages immutable, validation precedence and response shape as
+  - **Parity (Migration mode only):** error codes/messages immutable, validation precedence and response shape as
     in the Java source. A critical Java bug is **reported and decided with the user**, never
     silently fixed or replicated.
   - **Code quality:** ≤7 params, complexity ≤15, comments short and explain WHY (≤100
-    chars/line, no lengthy blocks), **no source-language references in comments** (no "Java", "Jackson", "Spring",
+    chars/line, no lengthy blocks), **no source-language references in comments** (Migration mode: no "Java", "Jackson", "Spring",
     "parity" — run the grep from the skill), constants unexported when single-package,
     `getDB` func pattern (never inject raw DB), errors wrapped with `%w`.
   - **Security:** new PAN/CVV/expiry/cardToken fields masked in logs (`log.sensitivefields`
@@ -359,6 +360,6 @@ skill's `PreToolUse` hook, which forces a confirmation prompt showing the litera
 - Do not trust a bot's suggestion by default: CodeRabbit is frequently right and frequently
   wrong about this codebase's conventions — validate, don't rubber-stamp.
 - CI green is the gate for Step 6; a red or pending check is never "good enough".
-- Fixes follow the migration code standards (go-bricks, parity, naming, tests) — a reviewer's
+- Fixes follow the code standards (go-bricks, naming, tests; parity only in Migration mode) — a reviewer's
   or bot's suggestion that breaks them is adapted or rejected, never copied blindly.
 - Respect the merge caps and NKH1 title rules from `review` Phase 1 for any commit you create.

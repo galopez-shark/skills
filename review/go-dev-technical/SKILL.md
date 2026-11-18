@@ -4,13 +4,13 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.28.0"
+  version: "2.29.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
   scope: code-review
   output-format: report
-  related-skills: novo-legacy-migration-endpoint, go-bricks-modules, golang-patterns, golang-code-style, golang-error-handling, golang-testing, common:security-baseline
+  related-skills: novo-go-construction-rules, novo-go-build, novo-legacy-migration-endpoint, go-bricks-modules, golang-patterns, golang-code-style, golang-error-handling, golang-testing, common:security-baseline
 hooks:
   PreToolUse:
     - matcher: "Bash"
@@ -29,8 +29,24 @@ Technical quality skill for Go services built on go-bricks. Three modes:
 ## When NOT to use this skill
 
 - Non-Go code (Java, TypeScript, PHP, Python) → `common:pr-review`.
-- Writing or migrating code → `/migrate`; this skill validates, it does not build.
+- Writing code → `/build` (new work) or `/migrate` (a legacy endpoint); this skill validates, it does not build.
 - No PR URL / path to inspect: `review` and `scan` need a concrete target.
+
+---
+
+## Mode — decide once, print it on the first line of the report
+
+`review` and `pr-fix` work on **any Go PR**: new work, a fix, a refactor or a migration. Nothing
+in them requires a migration. Decide the mode once, before Phase 0, and print it:
+
+| Mode | When | What changes |
+|---|---|---|
+| **Migration** | `.migration-context.yaml` exists in the repo **and** the PR's ticket, branch or paths match an `endpoint_inventory` entry (or the PR body cites a Java origin) | Java-parity rules apply: a name/code that mirrors the Java contract is documented, not reported (rule 5); check 23 reads the `EST-NN` list / Java origin |
+| **Build** | `docs/builds/<TICKET>.build-plan.yaml` exists for the PR's ticket, or the PR body lists `CA-NN` | Check 23's spec is the approved `CA-NN` + `S-NN` + `IN-NN` + `TC-NN`; no Java |
+| **Standard** (default) | neither of the above | No Java, no parity exemptions: names, codes and structure are judged on their merits. Check 23's spec is the ticket's acceptance criteria / the PR description; none readable → "no spec available" |
+
+Outside Migration mode every "legacy parity" exemption below is **off** and the `Java|Jackson|Spring|parity`
+comment grep is not required. Unsure which mode applies → say so and use Standard; never assume a migration.
 
 ---
 
@@ -61,7 +77,7 @@ cannot need it.
 2. **Every finding carries `file:line` + a concrete failure scenario + a fix.** No exceptions.
 3. **Unverifiable is ⚠️ NO VERIFICADO, never ✅.** A gap acknowledged beats a gap hidden.
 4. **Every SHOULD-FIX carries its concrete proposal** — the exact name, the `git mv` destination, the before→after diff, or (Phase 3b) the count plus the proposed owner. Without it the item is not ready and is not emitted.
-5. **Legacy parity beats aesthetics.** A name or a code that replicates the Java contract is documented, not reported.
+5. **Legacy parity beats aesthetics — in Migration mode only.** A name or a code that replicates the Java contract is documented, not reported. In Build and Standard mode there is no parity exemption.
 
 6. **No silent skips.** Every subcommand ends by printing its checklist of mandatory steps with
    the evidence of each (review: Fast-path rows 1-10 and checks 1-22 as run/N-A-with-reason;
@@ -251,8 +267,9 @@ REGLAS DURAS
   - go-bricks manda: si el framework lo provee, se usa.
   - Todo hallazgo lleva file:line + escenario de fallo concreto + fix.
   - Lo que no se pudo verificar es (warn) NO VERIFICADO, nunca (ok).
-  - Paridad legacy gana sobre estetica: un nombre que replica el contrato Java
-    se respeta y se documenta, no se reporta.
+  - Paridad legacy gana sobre estetica SOLO en modo Migracion: un nombre que replica
+    el contrato Java se respeta y se documenta, no se reporta. Modo (Migracion /
+    Build / Estandar) se decide una vez y va en la primera linea del reporte.
   - Fase 3b sin numeros no existe: un hallazgo de diseno sin conteo de sitios /
     autoridades / evidencia de costo en git es opinion, y no se emite.
   - "Duplication is far cheaper than the wrong abstraction": duplicacion chica y
@@ -418,12 +435,12 @@ cite the source skill on every finding that comes from one:
 | ≤7 params per func (group into a struct) | `grep -nE 'func .*\(([^,)]*,){7,}'` on added lines |
 | Cyclomatic complexity ≤15 | `gocyclo -over 15` on changed files (or the `gocyclo` linter) |
 | Comments are short and say WHY, **≤100 chars/line** (no lengthy blocks) | awk on added comment lines |
-| No source-language refs in comments (Java, Jackson, Spring, "parity") | `grep -rniE 'Java\|Jackson\|Spring\|parity'` on added `//` lines |
+| No source-language refs in comments (Java, Jackson, Spring, "parity") — **Migration mode only** | `grep -rniE 'Java\|Jackson\|Spring\|parity'` on added `//` lines |
 | Constants unexported when single-package | sweep exported `const` with no cross-package use |
 | SQL in `queries.go`, not inline; `getDB` func, never a raw injected DB | sweep |
 | Every `Raw`/`Expr`/`SetExpr` carries `// SECURITY: Manual SQL review completed - …` | check 1b |
 
-A rule that the PR breaks **by legacy parity** (a name or code mirroring the Java contract)
+In Migration mode, a rule that the PR breaks **by legacy parity** (a name or code mirroring the Java contract)
 is documented, not reported (rule 5). Every finding still needs `file:line` + the concrete fix.
 
 ### Phase 2 — go-bricks validation (checks 1-10)
@@ -482,7 +499,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
 | 22 | Best-practice standards: skills loaded per diff + params ≤7, complexity ≤15, comment rules | 1b | SHOULD-FIX / NIT |
 | 24 | Every created/changed unit has a use-case test (`0.0%` functions in changed files) | 3 | SHOULD-FIX / BLOCKER on money path |
-| 23 | **Spec axis**: does the PR deliver what the ticket / DoD / `EST-NN` cases / Java parity asked for? | 5 | BLOCKER / SHOULD-FIX |
+| 23 | **Spec axis**: does the PR deliver what the ticket / DoD / acceptance criteria asked for (`EST-NN` and Java parity only in Migration mode)? | 5 | BLOCKER / SHOULD-FIX |
 
 ---
 
@@ -3246,15 +3263,17 @@ right code" (**Spec**). A PR can pass one axis and fail the other, so report the
 **separate headings** (`## Standards`, `## Spec`) and never merge or re-rank findings across them.
 
 1. **Find the spec**, in this order: the Jira ticket in the PR body / `Refs:` line (read it with
-   the Atlassian connector; its DoD and the `EST-NN` list are the spec), then
-   `docs/modules/<module>/<endpoint>.plan-data.yaml` if present, then the Java origin named in
-   `.migration-context.yaml`. If none exists, say "no spec available" and skip — do not invent one.
+   the Atlassian connector; its acceptance criteria / DoD are the spec). Then, by mode:
+   **Build** → `docs/builds/<TICKET>.build-plan.yaml` (`CA-NN`, `S-NN`, `IN-NN`, `TC-NN`);
+   **Migration** → the `EST-NN` list, `docs/modules/<module>/<endpoint>.plan-data.yaml` if
+   present, then the Java origin named in `.migration-context.yaml`; **Standard** → the PR
+   description. If none exists, say "no spec available" and skip — do not invent one.
 2. **Report three things**, quoting the spec line for each:
-   - requirements the spec asked for that are **missing or partial** (an `EST-NN` with no test, a
-     DoD item with no code, a parity flow not implemented);
+   - requirements the spec asked for that are **missing or partial** (a `CA-NN`/`EST-NN` with no
+     test, a DoD item with no code, in Migration mode a parity flow not implemented);
    - behavior in the diff that **was not asked for** (scope creep, extra endpoints, renamed codes);
    - requirements that **look implemented but are wrong** (a response code or message that differs
-     from the Java).
+     from the Java — Migration mode only).
 3. A large diff (>400 changed lines) may delegate this check to a sub-agent with a fresh context
    (diff + spec only); aggregate its report verbatim under `## Spec`.
 
@@ -3290,7 +3309,7 @@ gh api "repos/<owner>/<repo>/pulls/<N>/comments" 2>/dev/null   # inline review t
 
 **Rule for each finding**:
 1. Check whether the author already addressed it in a comment.
-2. **Justification technically valid** (verified against Java parity / go-bricks /
+2. **Justification technically valid** (verified against Java parity in Migration mode / go-bricks /
    source — same discipline as every other finding) → **do NOT re-flag.** Record it as
    resolved so the author sees it was considered:
    > ✅ **Ya justificado por el autor** — `adapter.go:29`: el pool sin cota es intencional
@@ -3477,7 +3496,7 @@ pushes back on a naming or concurrency finding:
 - go-bricks `database/types/interfaces.go` — the authoritative QueryBuilder surface (checks 1b.1, 4c). **Derive it, never quote from memory**: `grep -hE '^\s+[A-Z][A-Za-z0-9]*\(' $GB/database/types/*.go`. The inventory in 1b.1 is stamped v0.63.0 and grows every release
 - go-bricks `messaging` / `outbox` / `inbox` packages — `Declarations.Validate()`, `ConsumerDeclaration`, `EventIDFromHeaders`, `Inbox.ProcessOnce` (check 6b). Read them in `$(go env GOMODCACHE)/github.com/gaborage/go-bricks@<ver>/`
 - NKH1 `common:pr-review` — sizing, title, coverage floor, promotion gates (Phase 1)
-- `novo-legacy-migration-endpoint` (`/migrate`) — phase caps (≤400 líneas / ≤10 files), branch-per-phase from `main`, version bump per phase (scan Step 6)
+- `novo-go-construction-rules` (shared by `/migrate` and `/build`) — phase caps (≤400 líneas / ≤10 files), branch-per-phase from `main`, version bump per phase (scan Step 6)
 
 **Keep this list honest**: when a rule here stops matching the linked source
 (a Go release changes a default, the style guide is revised), update the rule —
