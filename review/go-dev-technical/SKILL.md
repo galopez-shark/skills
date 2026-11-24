@@ -4,7 +4,7 @@ description: "Technical validator for Go services on go-bricks — stops broken 
 license: MIT
 metadata:
   author: galopez-shark
-  version: "2.29.0"
+  version: "2.30.0"
   domain: review
   triggers: go-dev-technical, pr-fix, atender comentarios PR, comentarios coderabbit, resolver comentarios review, go dev technical, go technical review, go-bricks review, go-bricks scan, validar nombres go, revisar integracion bus, roadmap de remediacion go, deep vs shallow modules, fuga de informacion, revisar duplicacion go, DRY go, idioms go uber
   role: specialist
@@ -80,7 +80,7 @@ cannot need it.
 5. **Legacy parity beats aesthetics — in Migration mode only.** A name or a code that replicates the Java contract is documented, not reported. In Build and Standard mode there is no parity exemption.
 
 6. **No silent skips.** Every subcommand ends by printing its checklist of mandatory steps with
-   the evidence of each (review: Fast-path rows 1-10 and checks 1-22 as run/N-A-with-reason;
+   the evidence of each (review: Fast-path rows 1-10 and checks 1-25 as run/N-A-with-reason;
    scan: its phases; pr-fix: the table in `references/pr-fix-workflow.md`). For review and scan,
    the rows **report file overwritten**, **`code` launched** (command and its result) and
    **open threads / conflicts checked** (Step 0.5c: counts, or `NO VERIFICADO`) are part of it. A step without
@@ -499,6 +499,7 @@ Not about blocking — about leveraging the framework's full potential.
 | 21 / 21a-21d | Go idiom safety net (Uber Go Style Guide) + modern stdlib, version-gated | 3b | BLOCKER / SHOULD-FIX / NIT |
 | 22 | Best-practice standards: skills loaded per diff + params ≤7, complexity ≤15, comment rules | 1b | SHOULD-FIX / NIT |
 | 24 | Every created/changed unit has a use-case test (`0.0%` functions in changed files) | 3 | SHOULD-FIX / BLOCKER on money path |
+| 25 | **Business errors leaked into generic errors** — a recognizable business condition answered with a catch-all error | 3 | NIT (SHOULD-FIX when the spec names the code or it is on the money path) |
 | 23 | **Spec axis**: does the PR deliver what the ticket / DoD / acceptance criteria asked for (`EST-NN` and Java parity only in Migration mode)? | 5 | BLOCKER / SHOULD-FIX |
 
 ---
@@ -2347,6 +2348,60 @@ Flag:
 - **Missing validation on external response**: external API response parsed without checking status
 - **Stale cache on error**: cache miss + fetch error → returns stale value without logging
 
+### 25. Business errors leaked into generic errors (NIT)
+
+A fix or a response that "works" is not automatically right: if a **business condition** can be
+told apart and answered specifically, wrapping it in a generic error hides it from the caller, from
+QA and from the logs. This check exists so that is **reported, not silently approved**. It applies
+to every review and to every fix pr-fix produces or a re-review verifies.
+
+**Business condition** = something the caller can act on or the business defined: not found,
+duplicate, invalid state (card blocked/cancelled/inactive), insufficient funds, limit exceeded,
+expired, not allowed for this user, invalid input the service validates, or a non-zero business
+code returned by an external service.
+
+**Evidence (read the changed code; no finding without it):**
+
+```bash
+# Catch-alls: one generic error/rc for many causes
+grep -nE 'errors\.New\("[^"]*(error|failed|fail)[^"]*"\)|fmt\.Errorf\("[^%"]*"\)' <changed-files> --include='*.go' | grep -v _test.go
+grep -nE 'default:|else \{' <changed-files> --include='*.go' | grep -v _test.go   # inspect the ones that map to the generic rc
+grep -nE 'sql\.ErrNoRows|ErrNotFound|ErrInvalid' <changed-files> --include='*.go' | grep -v _test.go
+```
+
+Flag (NIT) when a changed error path does any of these **and** the condition is distinguishable:
+- **Catch-all mapping**: a `default:` / final `else` / `if err != nil { return ErrGeneric }` that sends
+  several different causes to one generic code or message (internal error, `-1`, 500, "error al procesar").
+- **Cause discarded**: `sql.ErrNoRows`, a typed error or a sentinel is replaced by a generic one, so the
+  caller can no longer `errors.Is/As` it.
+- **External business code flattened**: an external service answers with a business code (blocked card,
+  invalid PIN, insufficient funds) and the adapter returns "error calling X" for all of them.
+- **Fix that hides instead of handles**: the PR (or the pr-fix commit) makes a failing case stop failing
+  by mapping it to the generic path, while the test only asserts "an error is returned".
+- **Validation collapsed**: several input rules return the same error, so the response cannot say which
+  one failed.
+
+Do **not** flag:
+- **Technical failures** (DB down, timeout, nil dependency, panic recovery): generic is correct there; the
+  rule is that the cause is logged and the client gets no internal detail.
+- A condition the caller **cannot** tell apart from the available data (say which data is missing).
+- **Migration mode**, when the Java contract answers that case with the same generic code: document it
+  (rule 5), do not report it.
+- A business error that already has its own sentinel and rc-keyed message.
+
+**Every finding carries a concrete proposal and a count** (no count, no finding):
+`file:line` — the business condition detected — what it answers today — **sites** that fold into the same
+generic answer (N) — the proposed sentinel (`ErrCardBlocked`), its rc and message in the existing rc-keyed
+table (the response funnel; never a parallel constant list), the `errors.Is` branch and where it goes, and the
+test that pins it (named after `CA-NN` / `EST-NN` when one exists). Never propose exposing `err.Error()`, SQL
+or stack to the client: the business message is a fixed, safe string.
+
+**Severity.** NIT by default — "the generic answer is accepted today, but it can be handled better".
+Escalate to **SHOULD-FIX** only when (a) the spec of check 23 (ticket criteria, `CA-NN`, `EST-NN`) names
+the specific code/message, report it once under `## Spec`; or (b) the path decides money, reversal, balance or
+authorization. A re-review (18c) does not mark such a comment ✅ Atendido if the fix only moved the error
+into the generic path: it is 🟡 Parcial.
+
 ### 24. Every created or changed unit has a use-case test (SHOULD-FIX; BLOCKER on the money path)
 
 The migration standard is that a unit ships with its test in the same PR ("tests in the next
@@ -3365,7 +3420,7 @@ directly, never repeating the comment verbatim. Outdated threads (`isOutdated`) 
 against the moved line, not skipped.
 
 Also run the whole review over the **new commits only** — a fix is new code and gets the
-same checks 1-22. Report a row `Seguimiento de comentarios previos` in the validation table:
+same checks 1-25. Report a row `Seguimiento de comentarios previos` in the validation table:
 `N previos · X atendidos · Y parciales · Z sin atender · W justificados · R regresiones`.
 
 ### Verdict system (ternary)

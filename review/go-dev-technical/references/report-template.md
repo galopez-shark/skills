@@ -126,6 +126,14 @@ Va **aparte** de los hallazgos de estándares; no se mezcla ni se reordena con e
 
 ---
 
+### 🧩 Fugas de errores de negocio (check 25 — NIT)
+
+> Ninguna / o tabla (una fila por condición, con conteo de sitios):
+
+| # | `file:line` | Condición de negocio | Hoy responde | Sitios | Propuesta (sentinel + rc + test) |
+|---|---|---|---|---|---|
+| 1 | `service/pin.go:88` | Tarjeta bloqueada | error genérico `-1` | 3 | `ErrCardBlocked` → rc `-2020` en la tabla de rc; `errors.Is` en el handler; test `TestService_SetPin_CardBlocked` |
+
 ### 📌 Para el próximo commit
 
 - {item 1 — forward-looking, no bloquea este PR}
