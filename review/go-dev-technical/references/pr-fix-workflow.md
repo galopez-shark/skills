@@ -205,6 +205,10 @@ Hard rules:
   - **Parity (Migration mode only):** error codes/messages immutable, validation precedence and response shape as
     in the Java source. A critical Java bug is **reported and decided with the user**, never
     silently fixed or replicated.
+  - **Business errors (check 25):** a fix must not make a failing case pass by sending it to the
+    generic error path. If the condition is a business one (not found, blocked, insufficient funds,
+    invalid state…), give it its own sentinel + rc-keyed message and a test asserting that code. If the
+    reviewer's suggestion would flatten it into a generic error, say so and propose the specific one.
   - **Code quality:** ≤7 params, complexity ≤15, comments short and explain WHY (≤100
     chars/line, no lengthy blocks), **no source-language references in comments** (Migration mode: no "Java", "Jackson", "Spring",
     "parity" — run the grep from the skill), constants unexported when single-package,
